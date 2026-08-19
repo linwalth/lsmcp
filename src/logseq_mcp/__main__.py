@@ -9,7 +9,9 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     from logseq_mcp.server import mcp
-    mcp.run()
+    mcp.settings.host = "127.0.0.1"
+    mcp.settings.port = 8765
+    mcp.run(transport="streamable-http")
 
 
 if __name__ == "__main__":
