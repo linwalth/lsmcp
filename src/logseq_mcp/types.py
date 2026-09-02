@@ -62,6 +62,17 @@ class PageEntity(BaseModel):
             v["namespace"] = ""
         return v
 
+    @property
+    def display_name(self) -> str:
+        """Human-readable page name, preserving original casing.
+
+        Logseq stores the canonical `name` lowercased as a unique id and keeps the
+        user-supplied spelling in `original-name`. Surface the latter so callers
+        show and reuse the intended casing instead of echoing the lowercased slug
+        (which Logseq would subsequently adopt as the page's display name).
+        """
+        return self.original_name or self.name
+
 
 class BlockEntity(BaseModel):
     """A Logseq block, as returned by getPageBlocksTree / getBlock."""

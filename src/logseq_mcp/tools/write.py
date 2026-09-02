@@ -435,6 +435,14 @@ async def page_create(
     properties: dict | None = None,
     blocks: list | None = None,
 ) -> str:
+    """Create a new Logseq page with optional properties and initial blocks.
+
+    Pass `name` with natural casing and orthography (for example "Meeting Notes
+    2026" or "Projekt Ideen"). Logseq resolves page names case-insensitively, so
+    casing only affects how the page is displayed; it preserves the supplied
+    casing as the page's display name. Do NOT lowercase or slugify `name` — that
+    would make the page show up in lowercase in Logseq.
+    """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     client = app_ctx.client
 
@@ -462,9 +470,12 @@ async def page_create(
     page = await _get_page_or_error(client, name)
     block_tree = await _get_page_blocks(client, name)
 
+    page_view = page.model_dump(by_alias=False)
+    page_view["name"] = page.display_name
+
     return json.dumps(
         {
-            "page": page.model_dump(by_alias=False),
+            "page": page_view,
             "created": True,
             "blocks": [block.model_dump(by_alias=False) for block in block_tree],
             "block_count": _count_blocks(block_tree),
@@ -475,6 +486,13 @@ async def page_create(
 
 @mcp.tool()
 async def block_append(ctx: Context, page: str, blocks: list | str | dict) -> str:
+    """Append blocks to an existing page.
+
+    Pass `page` with natural casing and orthography (for example "Meeting Notes").
+    Logseq resolves page names case-insensitively, so reuse the exact casing you
+    see in tool results rather than lowercasing it; referencing a page in
+    lowercase causes Logseq to adopt that lowercase form as the page's display name.
+    """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     client = app_ctx.client
 
@@ -545,6 +563,13 @@ async def delete_page(ctx: Context, name: str) -> str:
 
 @mcp.tool()
 async def rename_page(ctx: Context, old_name: str, new_name: str) -> str:
+    """Rename a page from old_name to new_name.
+
+    Pass `new_name` with natural casing and orthography (for example "Renamed
+    Page"). Logseq resolves page names case-insensitively and adopts the casing of
+    `new_name` as the page's new display name, so do NOT lowercase or slugify it —
+    that would make the rewritten page show up in lowercase in Logseq.
+    """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     client = app_ctx.client
 

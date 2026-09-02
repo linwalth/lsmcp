@@ -63,7 +63,17 @@ def _parse_block_tree(raw_blocks: list) -> list[BlockEntity]:
 
 @mcp.tool()
 async def get_page(ctx: Context, name: str) -> str:
-    """Return a page entity and deduplicated block tree by page name."""
+    """Return a page entity and deduplicated block tree by page name.
+
+    Logseq stores page identities case-insensitively: the canonical `name` is kept
+    lowercase as a unique id, while `original-name` preserves the casing used when
+    the page was created or last referenced. Pass `name` with natural casing and
+    orthography (for example "Meeting Notes 2026"); Logseq resolves it
+    case-insensitively. The returned page surfaces the human-readable name rather
+    than the lowercased storage slug, so callers should reuse it verbatim instead
+    of reintroducing a lowercased reference (which Logseq would adopt as the new
+    display name).
+    """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     client = app_ctx.client
 
@@ -74,6 +84,8 @@ async def get_page(ctx: Context, name: str) -> str:
         raise McpError(ErrorData(code=INTERNAL_ERROR, message=f"page not found: {name}"))
 
     page = PageEntity.model_validate(page_raw)
+    page_view = page.model_dump(by_alias=False)
+    page_view["name"] = page.display_name
 
     blocks_result = await client._call("logseq.Editor.getPageBlocksTree", name)
     blocks_raw = blocks_result if isinstance(blocks_result, list) else []
@@ -81,7 +93,7 @@ async def get_page(ctx: Context, name: str) -> str:
 
     return json.dumps(
         {
-            "page": page.model_dump(by_alias=False),
+            "page": page_view,
             "blocks": [block.model_dump(by_alias=False) for block in blocks],
             "block_count": _count_blocks(blocks),
         }
@@ -138,7 +150,7 @@ async def list_pages(
 
     result = [
         {
-            "name": page.original_name or page.name,
+            "name": page.display_name,
             "journal": page.journal,
             "properties": page.properties,
         }
@@ -173,7 +185,7 @@ async def get_references(ctx: Context, name: str) -> str:
 
         backlinks.append(
             {
-                "page": page.original_name or page.name,
+                "page": page.display_name,
                 "blocks": [{"uuid": block.uuid, "content": block.content} for block in blocks],
             }
         )
