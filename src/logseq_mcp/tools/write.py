@@ -486,12 +486,17 @@ async def page_create(
 
 @mcp.tool()
 async def block_append(ctx: Context, page: str, blocks: list | str | dict) -> str:
-    """Append blocks to an existing page.
+    """Append blocks to an existing page. REQUIRES `page` — it has NO default and
+    is never inferred from context (there is no notion of a "current page").
 
-    Pass `page` with natural casing and orthography (for example "Meeting Notes").
-    Logseq resolves page names case-insensitively, so reuse the exact casing you
-    see in tool results rather than lowercasing it; referencing a page in
-    lowercase causes Logseq to adopt that lowercase form as the page's display name.
+    You MUST pass the target page name explicitly in `page`. If you intend to write
+    to a journal/day page, call `journal_append` (which derives the page from a
+    date) or `journal_today` instead — do NOT call this tool hoping it will pick
+    today's page.
+
+    Pass `page` with natural casing and orthography (for example "Meeting Notes");
+    Logseq resolves page names case-insensitively but preserves the supplied casing
+    as the display name, so do not lowercase it.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     client = app_ctx.client
