@@ -124,7 +124,19 @@ async def list_pages(
     include_journals: bool = False,
     limit: int = 50,
 ) -> str:
-    """List pages with optional namespace filter."""
+    """List pages, optionally narrowed to a namespace prefix.
+
+    NOTE: this returns AT MOST `limit` pages (default 50) sorted alphabetically by
+    the lowercased storage name, so deeply nested or late-alphabetical pages
+    (including most namespace pages like "Worldbuilding/...") can be cut off. To
+    find a page when you only know a fragment of its name, use `search_pages`
+    instead; to list EVERYTHING beneath a namespace without truncation, use
+    `list_namespace`.
+
+    `namespace` is a case-insensitive prefix matched against the full page path
+    (for example "projects" matches "projects/alpha" and "projects/beta"). Pass
+    natural casing; results surface the human-readable page name.
+    """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     client = app_ctx.client
 
@@ -157,6 +169,201 @@ async def list_pages(
         for page in pages
     ]
     return json.dumps(result)
+
+
+def _page_summary(page: PageEntity) -> dict:
+    return {
+        "name": page.display_name,
+        "journal": page.journal,
+        "properties": page.properties,
+    }
+
+
+def _leaf_segment(name: str) -> str:
+    return name.rsplit("/", 1)[-1]
+
+
+def _search_rank(page: PageEntity, query_cf: str) -> tuple[int, int, int, str]:
+    """Rank matches so the page the user most likely means sorts first.
+
+    Order: exact leaf match (0) < leaf contains query (1) < match only in a
+    namespace segment (2); then shallower pages before deeper ones; then
+    alphabetical by lowercased storage name as a stable tiebreaker.
+    """
+    name_cf = page.name.casefold()
+    leaf = _leaf_segment(name_cf)
+    if leaf == query_cf:
+        bucket = 0
+    elif query_cf in leaf:
+        bucket = 1
+    else:
+        bucket = 2
+    depth = page.name.count("/") + 1
+    return (bucket, depth, len(page.name), name_cf)
+
+
+@mcp.tool()
+async def search_pages(
+    ctx: Context,
+    query: str,
+    include_journals: bool = False,
+    limit: int = 50,
+) -> str:
+    """Find pages by a fragment of their name — the primary way to locate a page
+    when you do NOT know its exact full path (for example a nested namespace page
+    like "Worldbuilding/Regions/Eastern Sea").
+
+    Matching is case-insensitive and checks BOTH the human-readable name and the
+    lowercased storage name, so a query like "eastern" finds the page above and
+    returns its FULL path. Results are ranked: an exact match on the page's final
+    path segment ranks first, then a segment that contains the query, then matches
+    in a parent namespace. Pass `query` with natural casing; `limit=0` returns all
+    matches. Use this BEFORE guessing a full page name for `get_page`/`block_append`.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    client = app_ctx.client
+
+    stripped = query.strip()
+    if not stripped:
+        raise McpError(ErrorData(code=INTERNAL_ERROR, message="query must be a non-empty string"))
+    query_cf = stripped.casefold()
+
+    logger.info("search_pages: query=%r limit=%d", stripped, limit)
+
+    raw = await client._call("logseq.Editor.getAllPages")
+    pages_raw = raw if isinstance(raw, list) else []
+
+    matches: list[PageEntity] = []
+    for page_raw in pages_raw:
+        page = PageEntity.model_validate(page_raw)
+        if not page.name:
+            continue
+        if not include_journals and page.journal:
+            continue
+        haystack = (page.name + "\n" + page.original_name).casefold()
+        if query_cf not in haystack:
+            continue
+        matches.append(page)
+
+    matches.sort(key=lambda page: _search_rank(page, query_cf))
+    if limit > 0:
+        matches = matches[:limit]
+
+    return json.dumps([_page_summary(page) for page in matches])
+
+
+@mcp.tool()
+async def list_namespace(
+    ctx: Context,
+    namespace: str,
+    include_journals: bool = False,
+    limit: int = 0,
+) -> str:
+    """List every page beneath a namespace, without the alphabetical truncation
+    that affects `list_pages`. Use this to browse a hierarchy when you know a
+    parent namespace but not the leaf page (for example pass "worldbuilding" to
+    see all of "worldbuilding/...", or "worldbuilding/regions" to drill one level
+    deeper).
+
+    `namespace` is a top-level or nested namespace path WITHOUT leading or trailing
+    slashes (for example "projects" or "worldbuilding/regions"). Resolution is
+    case-insensitive. `limit=0` (the default) returns all matching pages; pass a
+    positive number to cap the result. If you only know a name fragment and not a
+    namespace, use `search_pages` instead.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    client = app_ctx.client
+
+    ns = namespace.strip().strip("/")
+    if not ns:
+        raise McpError(
+            ErrorData(code=INTERNAL_ERROR, message="namespace must be a non-empty string")
+        )
+
+    logger.info("list_namespace: namespace=%r limit=%d", ns, limit)
+
+    raw = await client._call("logseq.Editor.getPagesFromNamespace", ns)
+    pages_raw = raw if isinstance(raw, list) else []
+
+    pages: list[PageEntity] = []
+    for page_raw in pages_raw:
+        page = PageEntity.model_validate(page_raw)
+        if not page.name:
+            continue
+        if not include_journals and page.journal:
+            continue
+        pages.append(page)
+
+    pages.sort(key=lambda page: page.name.lower())
+    if limit > 0:
+        pages = pages[:limit]
+
+    return json.dumps([_page_summary(page) for page in pages])
+
+
+def _namespace_tree_node(raw: dict, include_journals: bool) -> dict | None:
+    """Build a hierarchical node from a raw getPagesTreeFromNamespace entry."""
+    page = PageEntity.model_validate(raw)
+    if not page.name:
+        return None
+    if not include_journals and page.journal:
+        return None
+
+    children_raw = raw.get("children", [])
+    children = []
+    if isinstance(children_raw, list):
+        for child_raw in children_raw:
+            if isinstance(child_raw, dict):
+                child = _namespace_tree_node(child_raw, include_journals)
+                if child is not None:
+                    children.append(child)
+
+    node = _page_summary(page)
+    node["children"] = children
+    return node
+
+
+@mcp.tool()
+async def list_namespace_tree(
+    ctx: Context,
+    namespace: str,
+    include_journals: bool = False,
+) -> str:
+    """Browse a namespace as a HIERARCHICAL TREE (parents with nested children).
+
+    Unlike `list_namespace` (flat list), this preserves the parent→child structure
+    so you can drill into sub-namespaces visually. Use this when you want to
+    understand the layout of a namespace before picking a specific page — for
+    example passing "worldbuilding" returns a tree showing "worldbuilding/regions/
+    ..." with regions' pages nested beneath it.
+
+    `namespace` is a top-level or nested namespace path WITHOUT leading or
+    trailing slashes. Resolution is case-insensitive. Journal pages are excluded
+    by default; pass `include_journals=True` to include them. If you only need a
+    flat list of page names, use `list_namespace` instead.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    client = app_ctx.client
+
+    ns = namespace.strip().strip("/")
+    if not ns:
+        raise McpError(
+            ErrorData(code=INTERNAL_ERROR, message="namespace must be a non-empty string")
+        )
+
+    logger.info("list_namespace_tree: namespace=%r", ns)
+
+    raw = await client._call("logseq.Editor.getPagesTreeFromNamespace", ns)
+    pages_raw = raw if isinstance(raw, list) else []
+
+    tree = []
+    for page_raw in pages_raw:
+        if isinstance(page_raw, dict):
+            node = _namespace_tree_node(page_raw, include_journals)
+            if node is not None:
+                tree.append(node)
+
+    return json.dumps(tree)
 
 
 @mcp.tool()

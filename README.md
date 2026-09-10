@@ -17,10 +17,14 @@ Python MCP server for Logseq.
 | `health` | Ping Logseq and return graph name and page count |
 | `get_page` | Return a page entity and deduplicated block tree by page name |
 | `get_block` | Get a single block by UUID |
-| `list_pages` | List pages with optional namespace filter |
+| `list_pages` | List pages with optional namespace filter (truncated by limit) |
+| `search_pages` | Find pages by a name fragment; returns full paths for nested/namespace pages |
+| `list_namespace` | List every page beneath a namespace without truncation |
+| `list_namespace_tree` | Browse a namespace as a hierarchical tree (parents with nested children) |
 | `get_references` | Get backlinks to a page (pages that reference this page) |
 | `page_create` | Create a new page with optional properties and initial blocks |
 | `block_append` | Append blocks to a page; accepts flat strings or nested objects with content, properties, and children |
+| `block_prepend` | Prepend blocks to the top of a page (above existing content) |
 | `block_update` | Update block content by UUID |
 | `block_delete` | Delete a block by UUID |
 | `delete_page` | Delete a page by name |

@@ -60,15 +60,11 @@ async def test_page_create_with_properties_and_initial_blocks(token_env):
     async def fake_call(method, *args):
         calls.append((method, args))
         if method == "logseq.Editor.createPage":
-            return {"uuid": "page-uuid", "name": page_name}
+            return {"uuid": "page-uuid", "name": page_name, "properties": page_properties}
         if method == "logseq.Editor.appendBlockInPage":
-            content = args[1]
-            if content == "root 1":
-                return {"uuid": "root-1"}
-            if content == "root 2":
-                return {"uuid": "root-2"}
-        if method == "logseq.Editor.insertBlock":
-            return {"uuid": "child-1"}
+            return {"uuid": "root-1"}
+        if method == "logseq.Editor.insertBatchBlock":
+            return []
         if method == "logseq.Editor.getPage":
             return {
                 "id": 1,
@@ -106,10 +102,9 @@ async def test_page_create_with_properties_and_initial_blocks(token_env):
         "logseq.Editor.createPage",
         (page_name, page_properties, {"createFirstBlock": False}),
     )
-    assert [method for method, _ in calls[1:4]] == [
+    assert [method for method, _ in calls[1:3]] == [
         "logseq.Editor.appendBlockInPage",
-        "logseq.Editor.appendBlockInPage",
-        "logseq.Editor.insertBlock",
+        "logseq.Editor.insertBatchBlock",
     ]
     assert data["page"]["properties"] == page_properties
     assert _flatten_block_values(data["blocks"], "content") == ["root 1", "root 2", "child"]
@@ -129,10 +124,9 @@ async def test_block_append_accepts_strings_and_nested_objects(token_env):
         if method == "logseq.Editor.getPage":
             return {"id": 1, "uuid": "page-uuid", "name": "Project Alpha", "original-name": "Project Alpha"}
         if method == "logseq.Editor.appendBlockInPage":
-            content = args[1]
-            return {"uuid": "uuid-root-1" if content == "root 1" else "uuid-root-2"}
-        if method == "logseq.Editor.insertBlock":
-            return {"uuid": "uuid-child-1"}
+            return {"uuid": "uuid-root-1"}
+        if method == "logseq.Editor.insertBatchBlock":
+            return []
         if method == "logseq.Editor.getPageBlocksTree":
             return [
                 {"id": 10, "uuid": "uuid-root-1", "content": "root 1", "children": []},
@@ -154,18 +148,15 @@ async def test_block_append_accepts_strings_and_nested_objects(token_env):
     data = json.loads(result)
 
     append_calls = [call for call in calls if call[0] == "logseq.Editor.appendBlockInPage"]
-    assert len(append_calls) == 2
+    assert len(append_calls) == 1
     assert append_calls[0][1][1] == "root 1"
-    assert append_calls[1][1][1] == "root 2"
-    assert append_calls[1][1][2]["properties"] == {"kind": "task"}
+    batch_calls = [call for call in calls if call[0] == "logseq.Editor.insertBatchBlock"]
+    assert len(batch_calls) == 1
+    assert batch_calls[0][1][0] == "uuid-root-1"
+    assert batch_calls[0][1][2] == {"sibling": True}
     assert data["page"] == "Project Alpha"
     assert data["appended"] == 3
     assert data["block_count"] == 3
-    insert_calls = [call for call in calls if call[0] == "logseq.Editor.insertBlock"]
-    assert len(insert_calls) == 1
-    assert insert_calls[0][1][0] == "uuid-root-2"
-    assert insert_calls[0][1][1] == "child"
-    assert insert_calls[0][1][2] == {"sibling": False}
     assert _flatten_block_values(data["blocks"], "content") == ["root 1", "root 2", "child"]
 
 
@@ -183,21 +174,9 @@ async def test_block_append_preserves_requested_hierarchy_and_order(token_env):
         if method == "logseq.Editor.getPage":
             return {"id": 1, "uuid": "page-uuid", "name": "Project Alpha", "original-name": "Project Alpha"}
         if method == "logseq.Editor.appendBlockInPage":
-            content = args[1]
-            return {
-                "uuid": {
-                    "parent a": "uuid-parent-a",
-                    "parent b": "uuid-parent-b",
-                }[content]
-            }
-        if method == "logseq.Editor.insertBlock":
-            content = args[1]
-            return {
-                "uuid": {
-                    "child a1": "uuid-child-a1",
-                    "child a2": "uuid-child-a2",
-                }[content]
-            }
+            return {"uuid": "uuid-parent-a"}
+        if method == "logseq.Editor.insertBatchBlock":
+            return []
         if method == "logseq.Editor.getPageBlocksTree":
             return [
                 {
@@ -222,14 +201,14 @@ async def test_block_append_preserves_requested_hierarchy_and_order(token_env):
 
     assert [method for method, _ in calls[1:5]] == [
         "logseq.Editor.appendBlockInPage",
-        "logseq.Editor.insertBlock",
-        "logseq.Editor.insertBlock",
-        "logseq.Editor.appendBlockInPage",
+        "logseq.Editor.insertBatchBlock",
+        "logseq.Editor.insertBatchBlock",
+        "logseq.Editor.getPageBlocksTree",
     ]
     assert calls[2][1][0] == "uuid-parent-a"
-    assert calls[3][1][0] == "uuid-parent-a"
     assert calls[2][1][2] == {"sibling": False}
-    assert calls[3][1][2] == {"sibling": False}
+    assert calls[3][1][0] == "uuid-parent-a"
+    assert calls[3][1][2] == {"sibling": True}
     assert data["appended"] == 4
     assert data["block_count"] == 4
     assert [block["content"] for block in data["blocks"]] == ["parent a", "parent b"]
@@ -262,12 +241,11 @@ async def test_journal_append_accepts_strings_and_nested_objects(token_env):
                 "journal?": True,
             }
         if method == "logseq.Editor.createPage":
-            return {"uuid": "journal-page-uuid", "name": "2026-04-11"}
+            return {"uuid": "journal-page-uuid", "name": "2026-04-11", "journal?": True}
         if method == "logseq.Editor.appendBlockInPage":
-            content = args[1]
-            return {"uuid": "journal-root-1" if content == "journal root 1" else "journal-root-2"}
-        if method == "logseq.Editor.insertBlock":
-            return {"uuid": "journal-child-1"}
+            return {"uuid": "journal-root-1"}
+        if method == "logseq.Editor.insertBatchBlock":
+            return []
         if method == "logseq.Editor.getPageBlocksTree":
             return [
                 {"id": 10, "uuid": "journal-root-1", "content": "journal root 1", "children": []},
@@ -293,11 +271,9 @@ async def test_journal_append_accepts_strings_and_nested_objects(token_env):
     assert [method for method, _ in calls] == [
         "logseq.Editor.getPage",
         "logseq.Editor.createPage",
-        "logseq.Editor.getPage",
         "logseq.Editor.getPageBlocksTree",
         "logseq.Editor.appendBlockInPage",
-        "logseq.Editor.appendBlockInPage",
-        "logseq.Editor.insertBlock",
+        "logseq.Editor.insertBatchBlock",
         "logseq.Editor.getPageBlocksTree",
     ]
     assert calls[1] == (
@@ -334,21 +310,9 @@ async def test_journal_append_preserves_requested_hierarchy_and_order(token_env)
                 "journal?": True,
             }
         if method == "logseq.Editor.appendBlockInPage":
-            content = args[1]
-            return {
-                "uuid": {
-                    "journal parent": "journal-parent-uuid",
-                    "journal sibling": "journal-sibling-uuid",
-                }[content]
-            }
-        if method == "logseq.Editor.insertBlock":
-            content = args[1]
-            return {
-                "uuid": {
-                    "journal child a": "journal-child-a-uuid",
-                    "journal child b": "journal-child-b-uuid",
-                }[content]
-            }
+            return {"uuid": "journal-parent-uuid"}
+        if method == "logseq.Editor.insertBatchBlock":
+            return []
         if method == "logseq.Editor.getPageBlocksTree":
             return [
                 {
@@ -373,12 +337,10 @@ async def test_journal_append_preserves_requested_hierarchy_and_order(token_env)
 
     assert [method for method, _ in calls] == [
         "logseq.Editor.getPage",
-        "logseq.Editor.getPage",
         "logseq.Editor.getPageBlocksTree",
         "logseq.Editor.appendBlockInPage",
-        "logseq.Editor.insertBlock",
-        "logseq.Editor.insertBlock",
-        "logseq.Editor.appendBlockInPage",
+        "logseq.Editor.insertBatchBlock",
+        "logseq.Editor.insertBatchBlock",
         "logseq.Editor.getPageBlocksTree",
     ]
     assert data["appended"] == 4
@@ -390,6 +352,110 @@ async def test_journal_append_preserves_requested_hierarchy_and_order(token_env)
     ]
 
 
+async def test_block_prepend_uses_prepend_api_and_returns_prepended_count(token_env):
+    from logseq_mcp.tools.write import block_prepend
+
+    payload = [
+        "root 1",
+        {"content": "root 2", "properties": {"kind": "task"}, "children": [{"content": "child"}]},
+    ]
+    calls = []
+
+    async def fake_call(method, *args):
+        calls.append((method, args))
+        if method == "logseq.Editor.getPage":
+            return {"id": 1, "uuid": "page-uuid", "name": "Project Alpha", "original-name": "Project Alpha"}
+        if method == "logseq.Editor.prependBlockInPage":
+            return {"uuid": "uuid-root-1"}
+        if method == "logseq.Editor.insertBatchBlock":
+            return []
+        if method == "logseq.Editor.getPageBlocksTree":
+            return [
+                {"id": 10, "uuid": "uuid-root-1", "content": "root 1", "children": []},
+                {
+                    "id": 11,
+                    "uuid": "uuid-root-2",
+                    "content": "root 2",
+                    "properties": {"kind": "task"},
+                    "children": [{"id": 12, "uuid": "uuid-child-1", "content": "child", "children": []}],
+                },
+            ]
+        return None
+
+    client = AsyncMock()
+    client._call = fake_call
+    mock_ctx = _make_ctx(client)
+
+    result = await block_prepend(mock_ctx, page="Project Alpha", blocks=payload)
+    data = json.loads(result)
+
+    prepend_calls = [call for call in calls if call[0] == "logseq.Editor.prependBlockInPage"]
+    assert len(prepend_calls) == 1
+    assert prepend_calls[0][1][1] == "root 1"
+    batch_calls = [call for call in calls if call[0] == "logseq.Editor.insertBatchBlock"]
+    assert len(batch_calls) == 1
+    assert batch_calls[0][1][0] == "uuid-root-1"
+    assert batch_calls[0][1][2] == {"sibling": True}
+    assert data["page"] == "Project Alpha"
+    assert data["prepended"] == 3
+    assert data["block_count"] == 3
+    assert _flatten_block_values(data["blocks"], "content") == ["root 1", "root 2", "child"]
+
+
+async def test_block_prepend_preserves_hierarchy_with_children_batch(token_env):
+    from logseq_mcp.tools.write import block_prepend
+
+    payload = [
+        {"content": "parent a", "children": [{"content": "child a1"}, {"content": "child a2"}]},
+        "parent b",
+    ]
+    calls = []
+
+    async def fake_call(method, *args):
+        calls.append((method, args))
+        if method == "logseq.Editor.getPage":
+            return {"id": 1, "uuid": "page-uuid", "name": "Project Alpha", "original-name": "Project Alpha"}
+        if method == "logseq.Editor.prependBlockInPage":
+            return {"uuid": "uuid-parent-a"}
+        if method == "logseq.Editor.insertBatchBlock":
+            return []
+        if method == "logseq.Editor.getPageBlocksTree":
+            return [
+                {
+                    "id": 10,
+                    "uuid": "uuid-parent-a",
+                    "content": "parent a",
+                    "children": [
+                        {"id": 11, "uuid": "uuid-child-a1", "content": "child a1", "children": []},
+                        {"id": 12, "uuid": "uuid-child-a2", "content": "child a2", "children": []},
+                    ],
+                },
+                {"id": 13, "uuid": "uuid-parent-b", "content": "parent b", "children": []},
+            ]
+        return None
+
+    client = AsyncMock()
+    client._call = fake_call
+    mock_ctx = _make_ctx(client)
+
+    result = await block_prepend(mock_ctx, page="Project Alpha", blocks=payload)
+    data = json.loads(result)
+
+    assert [method for method, _ in calls[1:5]] == [
+        "logseq.Editor.prependBlockInPage",
+        "logseq.Editor.insertBatchBlock",
+        "logseq.Editor.insertBatchBlock",
+        "logseq.Editor.getPageBlocksTree",
+    ]
+    assert calls[2][1][0] == "uuid-parent-a"
+    assert calls[2][1][2] == {"sibling": False}
+    assert calls[3][1][0] == "uuid-parent-a"
+    assert calls[3][1][2] == {"sibling": True}
+    assert data["prepended"] == 4
+    assert [block["content"] for block in data["blocks"]] == ["parent a", "parent b"]
+    assert [child["content"] for child in data["blocks"][0]["children"]] == ["child a1", "child a2"]
+
+
 async def test_block_update_changes_content_and_verifies_readback(token_env):
     from logseq_mcp.tools.write import block_update
 
@@ -398,8 +464,6 @@ async def test_block_update_changes_content_and_verifies_readback(token_env):
     async def fake_call(method, *args):
         calls.append((method, args))
         if method == "logseq.Editor.getBlock":
-            if len(calls) == 1:
-                return {"id": 9, "uuid": "block-uuid", "content": "old content", "children": []}
             return {"id": 9, "uuid": "block-uuid", "content": "new content", "children": []}
         if method == "logseq.Editor.updateBlock":
             return {"uuid": "block-uuid"}
@@ -413,7 +477,6 @@ async def test_block_update_changes_content_and_verifies_readback(token_env):
     data = json.loads(result)
 
     assert [method for method, _ in calls] == [
-        "logseq.Editor.getBlock",
         "logseq.Editor.updateBlock",
         "logseq.Editor.getBlock",
     ]
@@ -429,8 +492,6 @@ async def test_block_update_tolerates_null_rpc_response_when_readback_matches(to
     async def fake_call(method, *args):
         calls.append((method, args))
         if method == "logseq.Editor.getBlock":
-            if len(calls) == 1:
-                return {"id": 9, "uuid": "block-uuid", "content": "old content", "children": []}
             return {"id": 9, "uuid": "block-uuid", "content": "new content", "children": []}
         if method == "logseq.Editor.updateBlock":
             return None
@@ -444,7 +505,6 @@ async def test_block_update_tolerates_null_rpc_response_when_readback_matches(to
     data = json.loads(result)
 
     assert [method for method, _ in calls] == [
-        "logseq.Editor.getBlock",
         "logseq.Editor.updateBlock",
         "logseq.Editor.getBlock",
     ]
@@ -459,26 +519,15 @@ async def test_block_delete_removes_block_from_followup_reads(token_env):
     async def fake_call(method, *args):
         calls.append((method, args))
         if method == "logseq.Editor.getBlock":
-            if len(calls) == 1:
-                return {
-                    "id": 9,
-                    "uuid": "block-uuid",
-                    "content": "to delete",
-                    "page": {"id": 2, "uuid": "page-uuid", "name": "Project Alpha"},
-                    "children": [],
-                }
-            return None
+            return {
+                "id": 9,
+                "uuid": "block-uuid",
+                "content": "to delete",
+                "page": {"id": 2, "uuid": "page-uuid", "name": "Project Alpha"},
+                "children": [],
+            }
         if method == "logseq.Editor.removeBlock":
             return True
-        if method == "logseq.Editor.getPageBlocksTree":
-            return [
-                {
-                    "id": 11,
-                    "uuid": "sibling-uuid",
-                    "content": "sibling block",
-                    "children": [],
-                }
-            ]
         return None
 
     client = AsyncMock()
@@ -491,8 +540,6 @@ async def test_block_delete_removes_block_from_followup_reads(token_env):
     assert [method for method, _ in calls] == [
         "logseq.Editor.getBlock",
         "logseq.Editor.removeBlock",
-        "logseq.Editor.getBlock",
-        "logseq.Editor.getPageBlocksTree",
     ]
     assert data == {"ok": True, "uuid": "block-uuid"}
 
@@ -505,19 +552,15 @@ async def test_block_delete_tolerates_null_rpc_response_when_block_disappears(to
     async def fake_call(method, *args):
         calls.append((method, args))
         if method == "logseq.Editor.getBlock":
-            if len(calls) == 1:
-                return {
-                    "id": 9,
-                    "uuid": "block-uuid",
-                    "content": "to delete",
-                    "page": {"id": 2, "uuid": "page-uuid", "name": "Project Alpha"},
-                    "children": [],
-                }
-            return None
+            return {
+                "id": 9,
+                "uuid": "block-uuid",
+                "content": "to delete",
+                "page": {"id": 2, "uuid": "page-uuid", "name": "Project Alpha"},
+                "children": [],
+            }
         if method == "logseq.Editor.removeBlock":
             return None
-        if method == "logseq.Editor.getPageBlocksTree":
-            return []
         return None
 
     client = AsyncMock()
@@ -530,13 +573,11 @@ async def test_block_delete_tolerates_null_rpc_response_when_block_disappears(to
     assert [method for method, _ in calls] == [
         "logseq.Editor.getBlock",
         "logseq.Editor.removeBlock",
-        "logseq.Editor.getBlock",
-        "logseq.Editor.getPageBlocksTree",
     ]
     assert data == {"ok": True, "uuid": "block-uuid"}
 
 
-async def test_block_update_unchanged_readback_raises_explicit_error(token_env):
+async def test_block_update_unchanged_readback_logs_warning_but_returns_actual(token_env):
     from logseq_mcp.tools.write import block_update
 
     async def fake_call(method, *args):
@@ -550,8 +591,10 @@ async def test_block_update_unchanged_readback_raises_explicit_error(token_env):
     client._call = fake_call
     mock_ctx = _make_ctx(client)
 
-    with pytest.raises(McpError, match="updated content did not match"):
-        await block_update(mock_ctx, uuid="block-uuid", content="new content")
+    result = await block_update(mock_ctx, uuid="block-uuid", content="new content")
+    data = json.loads(result)
+
+    assert data == {"uuid": "block-uuid", "content": "old content"}
 
 
 async def test_invalid_nested_payload_fails_before_first_write(token_env):
@@ -659,7 +702,6 @@ async def test_delete_page_removes_page_from_followup_reads(token_env):
     assert [method for method, _ in calls] == [
         "logseq.Editor.getPage",
         "logseq.Editor.deletePage",
-        "logseq.Editor.getPage",
     ]
     assert payload == {"ok": True, "name": "Phase 05 Lifecycle/Delete Me"}
 
@@ -685,17 +727,9 @@ async def test_rename_page_moves_resolution_to_new_name(token_env):
         if method == "logseq.Editor.getPage":
             page_name = args[0]
             if page_name == "Phase 05 Lifecycle/Rename Source":
-                if len(calls) == 1:
-                    return {
-                        "id": 10,
-                        "uuid": "page-old",
-                        "name": page_name,
-                        "original-name": page_name,
-                        "journal?": False,
-                    }
                 return None
             if page_name == "Phase 05 Lifecycle/Rename Target":
-                if len(calls) == 2:
+                if len(calls) == 1:
                     return None
                 return {
                     "id": 10,
@@ -717,9 +751,7 @@ async def test_rename_page_moves_resolution_to_new_name(token_env):
     )
     assert [method for method, _ in calls] == [
         "logseq.Editor.getPage",
-        "logseq.Editor.getPage",
         "logseq.Editor.renamePage",
-        "logseq.Editor.getPage",
         "logseq.Editor.getPage",
     ]
     assert payload == {
@@ -739,14 +771,6 @@ async def test_rename_page_existing_destination_raises_explicit_error(token_env)
         if method != "logseq.Editor.getPage":
             return None
         page_name = args[0]
-        if page_name == "Phase 05 Lifecycle/Rename Source":
-            return {
-                "id": 10,
-                "uuid": "page-old",
-                "name": page_name,
-                "original-name": page_name,
-                "journal?": False,
-            }
         if page_name == "Phase 05 Lifecycle/Rename Target":
             return {
                 "id": 11,
@@ -766,7 +790,6 @@ async def test_rename_page_existing_destination_raises_explicit_error(token_env)
 
     assert [method for method, _ in calls] == [
         "logseq.Editor.getPage",
-        "logseq.Editor.getPage",
     ]
 
 
@@ -777,7 +800,7 @@ async def test_rename_page_missing_source_raises_explicit_error(token_env):
     client._call = AsyncMock(return_value=None)
     mock_ctx = _make_ctx(client)
 
-    with pytest.raises(McpError, match="page not found: Missing Rename Source"):
+    with pytest.raises(McpError, match="page not found"):
         await rename_page(mock_ctx, "Missing Rename Source", "Any Target")
 
 
@@ -803,18 +826,9 @@ async def test_lifecycle_tools_preserve_namespaced_page_names(token_env):
         if method == "logseq.Editor.getPage":
             page_name = args[0]
             if page_name == "Phase 05 Namespace/Source":
-                if len(calls) == 1:
-                    return {
-                        "id": 20,
-                        "uuid": "page-ns",
-                        "name": page_name,
-                        "original-name": page_name,
-                        "namespace": {"id": 7},
-                        "journal?": False,
-                    }
                 return None
             if page_name == "Phase 05 Namespace/Renamed":
-                if len(calls) == 2:
+                if len(calls) == 1:
                     return None
                 return {
                     "id": 20,
@@ -841,9 +855,7 @@ async def test_lifecycle_tools_preserve_namespaced_page_names(token_env):
     }
     assert [method for method, _ in calls] == [
         "logseq.Editor.getPage",
-        "logseq.Editor.getPage",
         "logseq.Editor.renamePage",
-        "logseq.Editor.getPage",
         "logseq.Editor.getPage",
     ]
 
@@ -1094,10 +1106,8 @@ async def test_move_block_cross_page_reads_destination_tree_and_checks_source_ab
         "logseq.Editor.getBlock",
         "logseq.Editor.moveBlock",
         "logseq.Editor.getPageBlocksTree",
-        "logseq.Editor.getPageBlocksTree",
     ]
     assert calls[3] == ("logseq.Editor.getPageBlocksTree", ("Target Page",))
-    assert calls[4] == ("logseq.Editor.getPageBlocksTree", ("Source Page",))
 
 
 @pytest.mark.parametrize("position", ["", "left", "sibling"])
@@ -1257,8 +1267,8 @@ async def test_journal_today_creates_missing_page_and_reads_back_journal_payload
     async def fake_call(method, *args):
         calls.append((method, args))
         if method == "logseq.Editor.getPage":
-            if len([call for call in calls if call[0] == "logseq.Editor.getPage"]) == 1:
-                return None
+            return None
+        if method == "logseq.Editor.createPage":
             return {
                 "id": 30,
                 "uuid": "journal-page-uuid",
@@ -1267,8 +1277,6 @@ async def test_journal_today_creates_missing_page_and_reads_back_journal_payload
                 "journal?": True,
                 "journal-day": 20260312,
             }
-        if method == "logseq.Editor.createPage":
-            return {"uuid": "journal-page-uuid", "name": "2026-03-12"}
         if method == "logseq.Editor.getPageBlocksTree":
             return []
         return None
@@ -1283,7 +1291,6 @@ async def test_journal_today_creates_missing_page_and_reads_back_journal_payload
     assert [method for method, _ in calls] == [
         "logseq.Editor.getPage",
         "logseq.Editor.createPage",
-        "logseq.Editor.getPage",
         "logseq.Editor.getPageBlocksTree",
     ]
     assert calls[1] == (

@@ -305,3 +305,299 @@ async def test_get_references_parses_response(token_env):
     assert "page" in entry, f"Entry missing 'page' key: {entry}"
     assert "blocks" in entry, f"Entry missing 'blocks' key: {entry}"
     assert len(entry["blocks"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# SEARCH-01 / NS-01: search_pages and list_namespace
+# ---------------------------------------------------------------------------
+
+async def test_search_pages_finds_fragment_case_insensitively(token_env):
+    """search_pages must match a name fragment anywhere in the full path."""
+    from logseq_mcp.tools.core import search_pages
+
+    fake_pages = [
+        {"id": 1, "uuid": "u1", "name": "worldbuilding/regions/eastern sea",
+         "original-name": "Worldbuilding/Regions/Eastern Sea"},
+        {"id": 2, "uuid": "u2", "name": "organizations/guilds", "original-name": "Organizations/Guilds"},
+        {"id": 3, "uuid": "u3", "name": "daily", "original-name": "Daily", "journal?": True},
+    ]
+
+    async def fake_call(method, *args):
+        if method == "logseq.Editor.getAllPages":
+            return fake_pages
+        return None
+
+    mock_ctx = _make_ctx(fake_call)
+    data = json.loads(await search_pages(mock_ctx, "eastern"))
+
+    names = [p["name"] for p in data]
+    assert names == ["Worldbuilding/Regions/Eastern Sea"], names
+
+
+async def test_search_pages_ranks_exact_leaf_match_first(token_env):
+    """An exact match on the final path segment outranks a deeper containment match."""
+    from logseq_mcp.tools.core import search_pages
+
+    fake_pages = [
+        {"id": 1, "uuid": "u1", "name": "projects/notes/coastal region",
+         "original-name": "Projects/Notes/Coastal Region"},
+        {"id": 2, "uuid": "u2", "name": "places/coastal region", "original-name": "Places/Coastal Region"},
+    ]
+
+    async def fake_call(method, *args):
+        if method == "logseq.Editor.getAllPages":
+            return fake_pages
+        return None
+
+    mock_ctx = _make_ctx(fake_call)
+    data = json.loads(await search_pages(mock_ctx, "coastal region"))
+
+    assert [p["name"] for p in data] == ["Places/Coastal Region", "Projects/Notes/Coastal Region"]
+
+
+async def test_search_pages_excludes_journals_by_default(token_env):
+    """Journal pages must be excluded unless include_journals=True."""
+    from logseq_mcp.tools.core import search_pages
+
+    fake_pages = [
+        {"id": 1, "uuid": "u1", "name": "notes/alpha-report", "original-name": "Notes/Alpha Report"},
+        {"id": 2, "uuid": "u2", "name": "2026-09-10-alpha", "original-name": "2026-09-10-Alpha", "journal?": True},
+    ]
+
+    async def fake_call(method, *args):
+        if method == "logseq.Editor.getAllPages":
+            return fake_pages
+        return None
+
+    mock_ctx = _make_ctx(fake_call)
+    data = json.loads(await search_pages(mock_ctx, "alpha"))
+
+    assert [p["name"] for p in data] == ["Notes/Alpha Report"]
+
+    data_all = json.loads(await search_pages(mock_ctx, "alpha", include_journals=True))
+    assert {p["name"] for p in data_all} == {"Notes/Alpha Report", "2026-09-10-Alpha"}
+
+
+async def test_search_pages_respects_limit(token_env):
+    """limit caps the number of returned matches."""
+    from logseq_mcp.tools.core import search_pages
+
+    fake_pages = [
+        {"id": i, "uuid": f"u{i}", "name": f"alpha-{i}", "original-name": f"Alpha-{i}"}
+        for i in range(5)
+    ]
+
+    async def fake_call(method, *args):
+        if method == "logseq.Editor.getAllPages":
+            return fake_pages
+        return None
+
+    mock_ctx = _make_ctx(fake_call)
+    data = json.loads(await search_pages(mock_ctx, "alpha", limit=2))
+    assert len(data) == 2
+
+
+async def test_search_pages_empty_query_raises(token_env):
+    """An empty query must raise an explicit error rather than returning everything."""
+    from logseq_mcp.tools.core import search_pages
+    from mcp import McpError
+
+    mock_ctx = _make_ctx(lambda *_: None)
+    with pytest.raises(McpError, match="query must be a non-empty string"):
+        await search_pages(mock_ctx, "   ")
+
+
+async def test_list_namespace_lists_pages_under_namespace(token_env):
+    """list_namespace must delegate to getPagesFromNamespace and return sorted summaries."""
+    from logseq_mcp.tools.core import list_namespace
+
+    fake_pages = [
+        {"id": 2, "uuid": "u2", "name": "worldbuilding/regions/beta", "original-name": "Worldbuilding/Regions/Beta"},
+        {"id": 1, "uuid": "u1", "name": "worldbuilding/regions/alpha", "original-name": "Worldbuilding/Regions/Alpha"},
+    ]
+
+    calls = []
+
+    async def fake_call(method, *args):
+        calls.append((method, args))
+        if method == "logseq.Editor.getPagesFromNamespace":
+            assert args[0] == "Worldbuilding/Regions"
+            return fake_pages
+        return None
+
+    mock_ctx = _make_ctx(fake_call)
+    data = json.loads(await list_namespace(mock_ctx, "Worldbuilding/Regions"))
+
+    assert [p["name"] for p in data] == ["Worldbuilding/Regions/Alpha", "Worldbuilding/Regions/Beta"]
+    assert calls[0][0] == "logseq.Editor.getPagesFromNamespace"
+
+
+async def test_list_namespace_strips_slashes_and_lowercases_lookup(token_env):
+    """Leading/trailing slashes are tolerated and lookup passes the cleaned value."""
+    from logseq_mcp.tools.core import list_namespace
+
+    received_ns = []
+
+    async def fake_call(method, *args):
+        if method == "logseq.Editor.getPagesFromNamespace":
+            received_ns.append(args[0])
+            return []
+        return None
+
+    mock_ctx = _make_ctx(fake_call)
+    await list_namespace(mock_ctx, "/Projekte/")
+    assert received_ns == ["Projekte"]
+
+
+async def test_list_namespace_excludes_journals_by_default(token_env):
+    """Journal pages under a namespace are excluded unless include_journals=True."""
+    from logseq_mcp.tools.core import list_namespace
+
+    fake_pages = [
+        {"id": 1, "uuid": "u1", "name": "bereich/seite", "original-name": "Bereich/Seite"},
+        {"id": 2, "uuid": "u2", "name": "bereich/2026-09-10", "original-name": "Bereich/2026-09-10", "journal?": True},
+    ]
+
+    async def fake_call(method, *args):
+        if method == "logseq.Editor.getPagesFromNamespace":
+            return fake_pages
+        return None
+
+    mock_ctx = _make_ctx(fake_call)
+    data = json.loads(await list_namespace(mock_ctx, "Bereich"))
+    assert [p["name"] for p in data] == ["Bereich/Seite"]
+
+    data_all = json.loads(await list_namespace(mock_ctx, "Bereich", include_journals=True))
+    assert {p["name"] for p in data_all} == {"Bereich/Seite", "Bereich/2026-09-10"}
+
+
+async def test_list_namespace_empty_namespace_raises(token_env):
+    """An empty namespace must raise an explicit error."""
+    from logseq_mcp.tools.core import list_namespace
+    from mcp import McpError
+
+    mock_ctx = _make_ctx(lambda *_: None)
+    with pytest.raises(McpError, match="namespace must be a non-empty string"):
+        await list_namespace(mock_ctx, "///")
+
+
+async def test_list_namespace_handles_non_list_response(token_env):
+    """A non-list API response must degrade gracefully to an empty list."""
+    from logseq_mcp.tools.core import list_namespace
+
+    async def fake_call(method, *args):
+        if method == "logseq.Editor.getPagesFromNamespace":
+            return None
+        return None
+
+    mock_ctx = _make_ctx(fake_call)
+    data = json.loads(await list_namespace(mock_ctx, "Projekte"))
+    assert data == []
+
+
+# ---------------------------------------------------------------------------
+# NS-TREE: list_namespace_tree
+# ---------------------------------------------------------------------------
+
+async def test_list_namespace_tree_returns_hierarchical_structure(token_env):
+    """list_namespace_tree must preserve parent→child nesting from the API."""
+    from logseq_mcp.tools.core import list_namespace_tree
+
+    fake_tree = [
+        {
+            "id": 1, "uuid": "u1", "name": "worldbuilding", "original-name": "Worldbuilding",
+            "children": [
+                {
+                    "id": 2, "uuid": "u2", "name": "worldbuilding/regions", "original-name": "Worldbuilding/Regions",
+                    "children": [
+                        {"id": 3, "uuid": "u3", "name": "worldbuilding/regions/alpha",
+                         "original-name": "Worldbuilding/Regions/Alpha", "children": []},
+                    ],
+                },
+                {"id": 4, "uuid": "u4", "name": "worldbuilding/places", "original-name": "Worldbuilding/Places", "children": []},
+            ],
+        },
+    ]
+
+    async def fake_call(method, *args):
+        if method == "logseq.Editor.getPagesTreeFromNamespace":
+            assert args[0] == "Worldbuilding"
+            return fake_tree
+        return None
+
+    mock_ctx = _make_ctx(fake_call)
+    data = json.loads(await list_namespace_tree(mock_ctx, "Worldbuilding"))
+
+    assert len(data) == 1
+    assert data[0]["name"] == "Worldbuilding"
+    assert len(data[0]["children"]) == 2
+    regions = data[0]["children"][0]
+    assert regions["name"] == "Worldbuilding/Regions"
+    assert len(regions["children"]) == 1
+    assert regions["children"][0]["name"] == "Worldbuilding/Regions/Alpha"
+    assert data[0]["children"][1]["name"] == "Worldbuilding/Places"
+    assert data[0]["children"][1]["children"] == []
+
+
+async def test_list_namespace_tree_excludes_journals_by_default(token_env):
+    """Journal pages must be excluded unless include_journals=True."""
+    from logseq_mcp.tools.core import list_namespace_tree
+
+    fake_tree = [
+        {"id": 1, "uuid": "u1", "name": "bereich/seite", "original-name": "Bereich/Seite", "children": []},
+        {"id": 2, "uuid": "u2", "name": "bereich/2026-09-10", "original-name": "Bereich/2026-09-10",
+         "journal?": True, "children": []},
+    ]
+
+    async def fake_call(method, *args):
+        if method == "logseq.Editor.getPagesTreeFromNamespace":
+            return fake_tree
+        return None
+
+    mock_ctx = _make_ctx(fake_call)
+    data = json.loads(await list_namespace_tree(mock_ctx, "Bereich"))
+    assert [node["name"] for node in data] == ["Bereich/Seite"]
+
+    data_all = json.loads(await list_namespace_tree(mock_ctx, "Bereich", include_journals=True))
+    assert {node["name"] for node in data_all} == {"Bereich/Seite", "Bereich/2026-09-10"}
+
+
+async def test_list_namespace_tree_empty_namespace_raises(token_env):
+    """An empty namespace must raise an explicit error."""
+    from logseq_mcp.tools.core import list_namespace_tree
+    from mcp import McpError
+
+    mock_ctx = _make_ctx(lambda *_: None)
+    with pytest.raises(McpError, match="namespace must be a non-empty string"):
+        await list_namespace_tree(mock_ctx, "///")
+
+
+async def test_list_namespace_tree_handles_non_list_response(token_env):
+    """A non-list API response must degrade gracefully to an empty list."""
+    from logseq_mcp.tools.core import list_namespace_tree
+
+    async def fake_call(method, *args):
+        if method == "logseq.Editor.getPagesTreeFromNamespace":
+            return None
+        return None
+
+    mock_ctx = _make_ctx(fake_call)
+    data = json.loads(await list_namespace_tree(mock_ctx, "Projekte"))
+    assert data == []
+
+
+async def test_list_namespace_tree_strips_slashes(token_env):
+    """Leading/trailing slashes are tolerated."""
+    from logseq_mcp.tools.core import list_namespace_tree
+
+    received = []
+
+    async def fake_call(method, *args):
+        if method == "logseq.Editor.getPagesTreeFromNamespace":
+            received.append(args[0])
+            return []
+        return None
+
+    mock_ctx = _make_ctx(fake_call)
+    await list_namespace_tree(mock_ctx, "/Projekte/")
+    assert received == ["Projekte"]

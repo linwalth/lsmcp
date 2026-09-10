@@ -11,7 +11,10 @@ def main() -> None:
     from logseq_mcp.server import mcp
     mcp.settings.host = "127.0.0.1"
     mcp.settings.port = 8765
-    mcp.run(transport="streamable-http")
+    try:
+        mcp.run(transport="streamable-http")
+    except KeyboardInterrupt:
+        pass
 
 
 if __name__ == "__main__":

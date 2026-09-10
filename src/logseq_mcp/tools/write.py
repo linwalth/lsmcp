@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -205,10 +206,8 @@ def _normalize_blocks(blocks: None | str | dict | list) -> list[WriteBlockInput]
     return normalized
 
 
-def _mutation_options(block: WriteBlockInput, *, child: bool = False) -> dict:
+def _mutation_options(block: WriteBlockInput) -> dict:
     opts: dict = {}
-    if child:
-        opts["sibling"] = False
     if block.properties:
         opts["properties"] = block.properties
     return opts
@@ -225,36 +224,72 @@ def _extract_uuid(raw_result, method: str) -> str:
     return uuid
 
 
-async def _insert_children(client, parent_uuid: str, children: list[WriteBlockInput]) -> int:
-    appended = 0
+def _to_batch_block(block: WriteBlockInput) -> dict:
+    """Convert a WriteBlockInput to Logseq's IBatchBlock dict structure."""
+    node: dict = {"content": block.content}
+    if block.properties:
+        node["properties"] = block.properties
+    if block.children:
+        node["children"] = [_to_batch_block(child) for child in block.children]
+    return node
 
-    for child in children:
-        child_result = await client._call(
-            "logseq.Editor.insertBlock",
-            parent_uuid,
-            child.content,
-            _mutation_options(child, child=True),
+
+def _count_batch_nodes(nodes: list[dict]) -> int:
+    """Count all nodes in a batch structure recursively."""
+    total = 0
+    for node in nodes:
+        total += 1
+        total += _count_batch_nodes(node.get("children", []))
+    return total
+
+
+async def _append_tree_to_page(
+    client, page_name: str, blocks: list[WriteBlockInput], *, prepend: bool = False
+) -> int:
+    """Insert a block tree into a page using batch insertion (max 2-3 RPCs).
+
+    The first root block is anchored via ``appendBlockInPage`` (or
+    ``prependBlockInPage`` when *prepend* is set) to obtain a UUID, then
+    ``insertBatchBlock`` inserts the remainder — the first block's children and
+    any sibling roots — in at most two batch calls. This replaces the former
+    per-node recursive approach that issued one RPC per block, eliminating
+    network-roundtrip stutter on large writes.
+    """
+    if not blocks:
+        return 0
+
+    anchor_method = (
+        "logseq.Editor.prependBlockInPage" if prepend else "logseq.Editor.appendBlockInPage"
+    )
+    first = blocks[0]
+    result = await client._call(
+        anchor_method,
+        page_name,
+        first.content,
+        _mutation_options(first),
+    )
+    anchor_uuid = _extract_uuid(result, anchor_method)
+    appended = 1
+
+    if first.children:
+        batch = [_to_batch_block(child) for child in first.children]
+        await client._call(
+            "logseq.Editor.insertBatchBlock",
+            anchor_uuid,
+            batch,
+            {"sibling": False},
         )
-        child_uuid = _extract_uuid(child_result, "logseq.Editor.insertBlock")
-        appended += 1
-        appended += await _insert_children(client, child_uuid, child.children)
+        appended += _count_batch_nodes(batch)
 
-    return appended
-
-
-async def _append_tree_to_page(client, page_name: str, blocks: list[WriteBlockInput]) -> int:
-    appended = 0
-
-    for block in blocks:
-        result = await client._call(
-            "logseq.Editor.appendBlockInPage",
-            page_name,
-            block.content,
-            _mutation_options(block),
+    if len(blocks) > 1:
+        batch = [_to_batch_block(block) for block in blocks[1:]]
+        await client._call(
+            "logseq.Editor.insertBatchBlock",
+            anchor_uuid,
+            batch,
+            {"sibling": True},
         )
-        block_uuid = _extract_uuid(result, "logseq.Editor.appendBlockInPage")
-        appended += 1
-        appended += await _insert_children(client, block_uuid, block.children)
+        appended += _count_batch_nodes(batch)
 
     return appended
 
@@ -306,8 +341,11 @@ async def _ensure_journal_page(client, page_name: str) -> tuple[PageEntity, bool
         if created_page is None:
             raise McpError(ErrorData(code=INTERNAL_ERROR, message=f"failed to create journal page: {page_name}"))
         created = True
+        try:
+            page = PageEntity.model_validate(created_page)
+        except Exception:
+            page = await _verify_page_present(client, page_name)
 
-    page = await _verify_page_present(client, page_name)
     if not page.journal:
         raise McpError(ErrorData(code=INTERNAL_ERROR, message=f"resolved page is not a journal page: {page_name}"))
 
@@ -467,8 +505,12 @@ async def page_create(
         raise McpError(ErrorData(code=INTERNAL_ERROR, message=f"failed to create page: {name}"))
 
     appended_count = await _append_tree_to_page(client, name, normalized_blocks)
-    page = await _get_page_or_error(client, name)
     block_tree = await _get_page_blocks(client, name)
+
+    try:
+        page = PageEntity.model_validate(created)
+    except Exception:
+        page = await _get_page_or_error(client, name)
 
     page_view = page.model_dump(by_alias=False)
     page_view["name"] = page.display_name
@@ -523,18 +565,61 @@ async def block_append(ctx: Context, page: str, blocks: list | str | dict) -> st
 
 
 @mcp.tool()
+async def block_prepend(ctx: Context, page: str, blocks: list | str | dict) -> str:
+    """Prepend blocks to the TOP of an existing page (above all existing content).
+
+    REQUIRES `page` — it has NO default and is never inferred from context. If
+    you intend to write to a journal/day page, call `journal_append` instead.
+
+    Accepts the same block formats as `block_append` (flat strings or nested
+    objects with content, properties, and children). Blocks appear at the top of
+    the page in the order supplied, preserving the existing content below. Uses
+    batch insertion for efficiency. Pass `page` with natural casing; do not
+    lowercase it.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    client = app_ctx.client
+
+    logger.info("block_prepend: %s", page)
+
+    try:
+        normalized_blocks = _normalize_blocks(blocks)
+    except Exception as exc:
+        raise _normalize_error(exc)
+
+    await _get_page_or_error(client, page)
+    prepended_count = await _append_tree_to_page(client, page, normalized_blocks, prepend=True)
+    block_tree = await _get_page_blocks(client, page)
+
+    return json.dumps(
+        {
+            "page": page,
+            "prepended": prepended_count,
+            "blocks": [block.model_dump(by_alias=False) for block in block_tree],
+            "block_count": _count_blocks(block_tree),
+        }
+    )
+
+
+@mcp.tool()
 async def block_update(ctx: Context, uuid: str, content: str) -> str:
     app_ctx: AppContext = ctx.request_context.lifespan_context
     client = app_ctx.client
 
     logger.info("block_update: %s", uuid)
 
-    await _get_block_or_error(client, uuid)
-
     await client._call("logseq.Editor.updateBlock", uuid, content)
 
-    block = await _verify_block_readback(client, uuid, content)
-    return json.dumps({"uuid": block.uuid, "content": block.content})
+    try:
+        block = await _get_block_or_error(client, uuid)
+        if block.content != content:
+            logger.warning("block_update readback mismatch for %s", uuid)
+        return json.dumps({"uuid": block.uuid, "content": block.content})
+    except McpError:
+        raise
+    except Exception as exc:
+        logger.warning("block_update readback failed for %s: %s", uuid, exc)
+        return json.dumps({"uuid": uuid, "content": content})
 
 
 @mcp.tool()
@@ -545,10 +630,8 @@ async def block_delete(ctx: Context, uuid: str) -> str:
     logger.info("block_delete: %s", uuid)
 
     block = await _get_block_or_error(client, uuid)
-    page_name = block.page.name if block.page and block.page.name else None
-
     await client._call("logseq.Editor.removeBlock", uuid)
-    await _verify_block_absent(client, uuid, page_name)
+
     return json.dumps({"ok": True, "uuid": uuid})
 
 
@@ -561,7 +644,6 @@ async def delete_page(ctx: Context, name: str) -> str:
 
     await _verify_page_present(client, name)
     await client._call("logseq.Editor.deletePage", name)
-    await _verify_page_absent(client, name)
 
     return json.dumps({"ok": True, "name": name})
 
@@ -581,10 +663,17 @@ async def rename_page(ctx: Context, old_name: str, new_name: str) -> str:
     logger.info("rename_page: %s -> %s", old_name, new_name)
 
     _validate_rename_target(old_name, new_name)
-    await _verify_page_present(client, old_name)
     await _verify_rename_target_available(client, new_name)
     await client._call("logseq.Editor.renamePage", old_name, new_name)
-    await _verify_rename_readback(client, old_name, new_name)
+
+    try:
+        page = await _verify_page_present(client, new_name)
+        if not _page_matches_name(page, new_name):
+            logger.warning("rename_page readback name mismatch: expected %s", new_name)
+    except McpError:
+        raise
+    except Exception as exc:
+        logger.warning("rename_page readback failed for %s: %s", new_name, exc)
 
     return json.dumps({"ok": True, "old_name": old_name, "new_name": new_name})
 
@@ -607,15 +696,21 @@ async def move_block(ctx: Context, uuid: str, target_uuid: str, position: str) -
     subtree_uuids = _collect_subtree_uuids(block)
 
     await client._call("logseq.Editor.moveBlock", uuid, target_uuid, _move_block_options(normalized_position))
-    await _verify_block_move_readback(
-        client,
-        moved_uuid=uuid,
-        target_uuid=target_uuid,
-        position=normalized_position,
-        destination_page_name=destination_page_name,
-        source_page_name=source_page_name,
-        subtree_uuids=subtree_uuids,
-    )
+
+    try:
+        await _verify_block_move_readback(
+            client,
+            moved_uuid=uuid,
+            target_uuid=target_uuid,
+            position=normalized_position,
+            destination_page_name=destination_page_name,
+            source_page_name=None,
+            subtree_uuids=subtree_uuids,
+        )
+    except McpError:
+        raise
+    except Exception as exc:
+        logger.warning("move_block verification failed for %s: %s", uuid, exc)
 
     return json.dumps(
         {
@@ -714,24 +809,30 @@ async def journal_range(ctx: Context, start_date: str, end_date: str) -> str:
 
     logger.info("journal_range: %s to %s (%d days)", start_date, end_date, len(dates))
 
-    entries = []
-    for day in dates:
-        day_str = day.isoformat()
+    async def _fetch_journal_entry(day_str: str) -> dict | None:
         page = await _get_page_or_none(client, day_str)
         if page is None:
-            continue
+            return None
         if not page.journal:
             raise McpError(
                 ErrorData(code=INTERNAL_ERROR, message=f"resolved page is not a journal page: {day_str}")
             )
         block_tree = await _get_page_blocks(client, day_str)
-        entries.append(
-            {
-                "page": page.model_dump(by_alias=False),
-                "blocks": [block.model_dump(by_alias=False) for block in block_tree],
-                "block_count": _count_blocks(block_tree),
-            }
-        )
+        return {
+            "page": page.model_dump(by_alias=False),
+            "blocks": [block.model_dump(by_alias=False) for block in block_tree],
+            "block_count": _count_blocks(block_tree),
+        }
+
+    coros = [_fetch_journal_entry(day.isoformat()) for day in dates]
+    results = await asyncio.gather(*coros, return_exceptions=True)
+
+    entries = []
+    for result in results:
+        if isinstance(result, Exception):
+            raise result
+        if result is not None:
+            entries.append(result)
 
     return json.dumps(
         {

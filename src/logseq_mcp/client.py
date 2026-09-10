@@ -18,7 +18,7 @@ class LogseqClient:
                 "LOGSEQ_API_TOKEN environment variable is required. "
                 "Set it in your MCP client config or shell environment."
             )
-        self._sem = asyncio.Semaphore(1)
+        self._sem = asyncio.Semaphore(4)
         self._http: httpx.AsyncClient | None = None
 
     async def __aenter__(self) -> "LogseqClient":
