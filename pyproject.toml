@@ -14,8 +14,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/andrej-berg/ya-logseq-mcp"
-Repository = "https://github.com/andrej-berg/ya-logseq-mcp"
+Homepage = "https://github.com/andrejberg/ya-logseq-mcp"
+Repository = "https://github.com/andrejberg/ya-logseq-mcp"
 
 [project.scripts]
 ya-logseq-mcp = "logseq_mcp.__main__:main"
