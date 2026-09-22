@@ -1,9 +1,12 @@
 import json
 import logging
 
+from typing import Annotated
+
 from mcp import McpError
 from mcp.types import ErrorData, INTERNAL_ERROR
 from mcp.server.fastmcp import Context
+from pydantic import Field
 
 from logseq_mcp.server import mcp, AppContext
 from logseq_mcp.types import BlockEntity, PageEntity
@@ -62,7 +65,10 @@ def _parse_block_tree(raw_blocks: list) -> list[BlockEntity]:
 
 
 @mcp.tool()
-async def get_page(ctx: Context, name: str) -> str:
+async def get_page(
+    ctx: Context,
+    name: Annotated[str, Field(description="Page name with natural casing (e.g. 'Meeting Notes 2026'). Resolved case-insensitively.")],
+) -> str:
     """Return a page entity and deduplicated block tree by page name.
 
     Logseq stores page identities case-insensitively: the canonical `name` is kept
@@ -101,8 +107,18 @@ async def get_page(ctx: Context, name: str) -> str:
 
 
 @mcp.tool()
-async def get_block(ctx: Context, uuid: str, include_children: bool = True) -> str:
-    """Get a single block by UUID."""
+async def get_block(
+    ctx: Context,
+    uuid: Annotated[str, Field(description="Block UUID (not a page name). From get_page/page_outline/etc.")],
+    include_children: Annotated[bool, Field(description="If true (default), return the block's child subtree too.")] = True,
+) -> str:
+    """Get a single block by UUID, optionally with its child subtree.
+
+    Returns the block's content, properties, marker, and (by default) recursively
+    expanded children. Identify the block by UUID — use `get_page` or
+    `page_outline` first to discover UUIDs. Set `include_children=false` for a
+    lightweight fetch of just the block itself.
+    """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     client = app_ctx.client
 
@@ -120,9 +136,10 @@ async def get_block(ctx: Context, uuid: str, include_children: bool = True) -> s
 @mcp.tool()
 async def list_pages(
     ctx: Context,
-    namespace: str = "",
-    include_journals: bool = False,
-    limit: int = 50,
+    namespace: Annotated[str, Field(description="Optional namespace PREFIX to filter by (e.g. 'projects' matches 'projects/alpha'). Case-insensitive. Empty = all pages.")] = "",
+    include_journals: Annotated[bool, Field(description="If true, include journal/day pages. Default false (exclude journals).")] = False,
+    limit: Annotated[int, Field(description="Max pages to return (alphabetical by storage name). 0 = unlimited. Default 50. NOTE: truncates late-alpha/deep-nested pages.")] = 50,
+    slim: Annotated[bool, Field(description="If true, drop per-page 'properties' — return only name+journal (lighter).")] = False,
 ) -> str:
     """List pages, optionally narrowed to a namespace prefix.
 
@@ -135,12 +152,14 @@ async def list_pages(
 
     `namespace` is a case-insensitive prefix matched against the full page path
     (for example "projects" matches "projects/alpha" and "projects/beta"). Pass
-    natural casing; results surface the human-readable page name.
+    natural casing; results surface the human-readable page name. Pass
+    `slim=True` to drop per-page `properties` and return only name + journal —
+    cheaper to scan when you are just browsing for a page name.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     client = app_ctx.client
 
-    logger.info("list_pages: namespace=%r limit=%d", namespace, limit)
+    logger.info("list_pages: namespace=%r limit=%d slim=%s", namespace, limit, slim)
 
     raw = await client._call("logseq.Editor.getAllPages")
     pages_raw = raw if isinstance(raw, list) else []
@@ -160,23 +179,18 @@ async def list_pages(
     if limit > 0:
         pages = pages[:limit]
 
-    result = [
-        {
-            "name": page.display_name,
-            "journal": page.journal,
-            "properties": page.properties,
-        }
-        for page in pages
-    ]
+    result = [_page_summary(page, slim=slim) for page in pages]
     return json.dumps(result)
 
 
-def _page_summary(page: PageEntity) -> dict:
-    return {
+def _page_summary(page: PageEntity, slim: bool = False) -> dict:
+    summary: dict = {
         "name": page.display_name,
         "journal": page.journal,
-        "properties": page.properties,
     }
+    if not slim:
+        summary["properties"] = page.properties
+    return summary
 
 
 def _leaf_segment(name: str) -> str:
@@ -205,9 +219,11 @@ def _search_rank(page: PageEntity, query_cf: str) -> tuple[int, int, int, str]:
 @mcp.tool()
 async def search_pages(
     ctx: Context,
-    query: str,
-    include_journals: bool = False,
-    limit: int = 50,
+    query: Annotated[str, Field(description="Fragment of a page name to search for (case-insensitive). Matches both display name and storage slug.")],
+    include_journals: Annotated[bool, Field(description="If true, include journal pages in results. Default false.")] = False,
+    limit: Annotated[int, Field(description="Max results. 0 = all matches. Default 50.")] = 50,
+    slim: Annotated[bool, Field(description="If true, drop per-page 'properties' — lighter results.")] = False,
+    within_namespace: Annotated[str, Field(description="Restrict matches to pages beneath this namespace (e.g. 'schauplätze'). Empty = search everywhere.")] = "",
 ) -> str:
     """Find pages by a fragment of their name — the primary way to locate a page
     when you do NOT know its exact full path (for example a nested namespace page
@@ -218,7 +234,10 @@ async def search_pages(
     returns its FULL path. Results are ranked: an exact match on the page's final
     path segment ranks first, then a segment that contains the query, then matches
     in a parent namespace. Pass `query` with natural casing; `limit=0` returns all
-    matches. Use this BEFORE guessing a full page name for `get_page`/`block_append`.
+    matches. Pass `slim=True` to drop per-page `properties`. Pass
+    `within_namespace="schauplätze"` to restrict matches to pages beneath that
+    namespace (handy in large graphs organised by namespaces). Use this BEFORE
+    guessing a full page name for `get_page`/`block_append`.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     client = app_ctx.client
@@ -227,8 +246,9 @@ async def search_pages(
     if not stripped:
         raise McpError(ErrorData(code=INTERNAL_ERROR, message="query must be a non-empty string"))
     query_cf = stripped.casefold()
+    ns_cf = within_namespace.strip().strip("/").lower()
 
-    logger.info("search_pages: query=%r limit=%d", stripped, limit)
+    logger.info("search_pages: query=%r limit=%d slim=%s ns=%r", stripped, limit, slim, ns_cf)
 
     raw = await client._call("logseq.Editor.getAllPages")
     pages_raw = raw if isinstance(raw, list) else []
@@ -240,6 +260,8 @@ async def search_pages(
             continue
         if not include_journals and page.journal:
             continue
+        if ns_cf and not page.name.lower().startswith(ns_cf + "/") and page.name.lower() != ns_cf:
+            continue
         haystack = (page.name + "\n" + page.original_name).casefold()
         if query_cf not in haystack:
             continue
@@ -249,15 +271,15 @@ async def search_pages(
     if limit > 0:
         matches = matches[:limit]
 
-    return json.dumps([_page_summary(page) for page in matches])
+    return json.dumps([_page_summary(page, slim=slim) for page in matches])
 
 
 @mcp.tool()
 async def list_namespace(
     ctx: Context,
-    namespace: str,
-    include_journals: bool = False,
-    limit: int = 0,
+    namespace: Annotated[str, Field(description="Namespace path without slashes (e.g. 'projects' or 'worldbuilding/regions'). Case-insensitive.")],
+    include_journals: Annotated[bool, Field(description="If true, include journal pages. Default false.")] = False,
+    limit: Annotated[int, Field(description="Cap on results. 0 (default) = all matching pages, no truncation.")] = 0,
 ) -> str:
     """List every page beneath a namespace, without the alphabetical truncation
     that affects `list_pages`. Use this to browse a hierarchy when you know a
@@ -326,8 +348,8 @@ def _namespace_tree_node(raw: dict, include_journals: bool) -> dict | None:
 @mcp.tool()
 async def list_namespace_tree(
     ctx: Context,
-    namespace: str,
-    include_journals: bool = False,
+    namespace: Annotated[str, Field(description="Top-level or nested namespace path without slashes (e.g. 'worldbuilding'). Case-insensitive.")],
+    include_journals: Annotated[bool, Field(description="If true, include journal pages in the tree. Default false.")] = False,
 ) -> str:
     """Browse a namespace as a HIERARCHICAL TREE (parents with nested children).
 
@@ -367,8 +389,16 @@ async def list_namespace_tree(
 
 
 @mcp.tool()
-async def get_references(ctx: Context, name: str) -> str:
-    """Get backlinks to a page (pages that reference this page)."""
+async def get_references(
+    ctx: Context,
+    name: Annotated[str, Field(description="Page name whose backlinks to retrieve (natural casing).")],
+) -> str:
+    """Get backlinks to a page — pages that CONTAIN a wikilink to this page.
+
+    Returns the referring pages and the specific blocks within them that link
+    here. For the reverse direction (what does THIS page link to?) use
+    `forward_links`. For multi-hop traversal use `expand_references`.
+    """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     client = app_ctx.client
 

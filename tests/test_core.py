@@ -601,3 +601,65 @@ async def test_list_namespace_tree_strips_slashes(token_env):
     mock_ctx = _make_ctx(fake_call)
     await list_namespace_tree(mock_ctx, "/Projekte/")
     assert received == ["Projekte"]
+
+
+async def test_list_pages_slim_drops_properties(token_env):
+    from logseq_mcp.tools.core import list_pages
+
+    fake_pages = [
+        {"id": 1, "uuid": "u1", "name": "alpha", "original-name": "Alpha",
+         "properties": {"status": "active"}},
+    ]
+
+    async def fake_call(method, *args):
+        if method == "logseq.Editor.getAllPages":
+            return fake_pages
+        return None
+
+    mock_ctx = _make_ctx(fake_call)
+    full = json.loads(await list_pages(mock_ctx))
+    slim = json.loads(await list_pages(mock_ctx, slim=True))
+
+    assert "properties" in full[0]
+    assert "properties" not in slim[0]
+    assert slim[0]["name"] == "Alpha"
+    assert slim[0]["journal"] is False
+
+
+async def test_search_pages_slim_drops_properties(token_env):
+    from logseq_mcp.tools.core import search_pages
+
+    fake_pages = [
+        {"id": 1, "uuid": "u1", "name": "alpha", "original-name": "Alpha",
+         "properties": {"status": "active"}},
+    ]
+
+    async def fake_call(method, *args):
+        if method == "logseq.Editor.getAllPages":
+            return fake_pages
+        return None
+
+    mock_ctx = _make_ctx(fake_call)
+    slim = json.loads(await search_pages(mock_ctx, "alph", slim=True))
+    assert slim and "properties" not in slim[0]
+
+
+async def test_search_pages_within_namespace_filters(token_env):
+    from logseq_mcp.tools.core import search_pages
+
+    fake_pages = [
+        {"id": 1, "uuid": "u1", "name": "schauplätze/dorf", "original-name": "Schauplätze/Dorf"},
+        {"id": 2, "uuid": "u2", "name": "kreaturen/dorf", "original-name": "Kreaturen/Dorf"},
+        {"id": 3, "uuid": "u3", "name": "schauplätzchen", "original-name": "Schauplätzchen"},
+    ]
+
+    async def fake_call(method, *args):
+        if method == "logseq.Editor.getAllPages":
+            return fake_pages
+        return None
+
+    mock_ctx = _make_ctx(fake_call)
+    res = json.loads(await search_pages(mock_ctx, "dorf", within_namespace="schauplätze"))
+    names = [p["name"] for p in res]
+    assert names == ["Schauplätze/Dorf"]
+    assert "Kreaturen/Dorf" not in names
