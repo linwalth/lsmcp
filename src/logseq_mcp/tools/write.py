@@ -8,6 +8,7 @@ from mcp import McpError
 from mcp.server.fastmcp import Context
 from mcp.types import ErrorData, INTERNAL_ERROR
 from pydantic import BaseModel, Field, ValidationError, model_validator
+from typing import Annotated
 
 from logseq_mcp.server import AppContext, mcp
 from logseq_mcp.types import BlockEntity, PageEntity
@@ -55,6 +56,16 @@ class WriteBlockInput(BaseModel):
 
 
 WriteBlockInput.model_rebuild()
+
+
+# Shared Annotated parameter descriptors for MCP tool signatures (descriptions
+# surface in the generated JSON schema so AI clients know how to call each tool).
+UuidArg = Annotated[str, Field(description="UUID of the target block (NOT a page name). Obtain it from get_page/get_block/page_outline.")]
+ContentArg = Annotated[str, Field(description="New markdown content for the block. Replaces the entire block body.")]
+PageNameArg = Annotated[str, Field(description="Target page name with natural casing (e.g. 'Meeting Notes'). Resolved case-insensitively; do NOT lowercase it.")]
+BlocksArg = Annotated[list | str | dict, Field(description="Block(s) to insert. Accepts a single string, a single object {content, properties?, children?}, or a list mixing both. Strings become plain blocks; objects allow nesting.")]
+MovePositionArg = Annotated[str, Field(description="Where to place the moved block relative to target: 'before' (preceding sibling), 'after' (following sibling), or 'child' (becomes a child of target).")]
+IsoDateArg = Annotated[str, Field(description="ISO calendar date as yyyy-MM-dd (e.g. '2026-09-22').")]
 
 
 def _count_blocks(blocks: list[BlockEntity]) -> int:
@@ -469,9 +480,9 @@ def _normalize_error(exc: Exception) -> McpError:
 @mcp.tool()
 async def page_create(
     ctx: Context,
-    name: str,
-    properties: dict | None = None,
-    blocks: list | None = None,
+    name: Annotated[str, Field(description="New page name with natural casing (e.g. 'Meeting Notes 2026'). Do NOT lowercase — casing becomes the display name.")],
+    properties: Annotated[dict | None, Field(description="Optional page-level properties as a key/value object (e.g. {\"status\": \"draft\"}). Omit or null for none.")] = None,
+    blocks: Annotated[list | None, Field(description="Optional initial blocks. Same format as block_append: strings or objects {content, properties?, children?}.")] = None,
 ) -> str:
     """Create a new Logseq page with optional properties and initial blocks.
 
@@ -527,7 +538,7 @@ async def page_create(
 
 
 @mcp.tool()
-async def block_append(ctx: Context, page: str, blocks: list | str | dict) -> str:
+async def block_append(ctx: Context, page: Annotated[str, Field(description="Existing target page name with natural casing (e.g. 'Meeting Notes'). NOT a journal date — use journal_append for that.")], blocks: BlocksArg) -> str:
     """Append blocks to an existing page. REQUIRES `page` — it has NO default and
     is never inferred from context (there is no notion of a "current page").
 
@@ -565,7 +576,7 @@ async def block_append(ctx: Context, page: str, blocks: list | str | dict) -> st
 
 
 @mcp.tool()
-async def block_prepend(ctx: Context, page: str, blocks: list | str | dict) -> str:
+async def block_prepend(ctx: Context, page: Annotated[str, Field(description="Existing target page name with natural casing. NOT a journal date — use journal_append for that.")], blocks: BlocksArg) -> str:
     """Prepend blocks to the TOP of an existing page (above all existing content).
 
     REQUIRES `page` — it has NO default and is never inferred from context. If
@@ -602,7 +613,15 @@ async def block_prepend(ctx: Context, page: str, blocks: list | str | dict) -> s
 
 
 @mcp.tool()
-async def block_update(ctx: Context, uuid: str, content: str) -> str:
+async def block_update(ctx: Context, uuid: UuidArg, content: ContentArg) -> str:
+    """Overwrite the content of an existing block identified by UUID.
+
+    Replaces the ENTIRE block body with `content` (no append/merge). Use
+    `block_append` to add new blocks instead. The block is identified by UUID, not
+    page name — get the UUID from `get_page`, `get_block`, or `page_outline`.
+    Performs a readback after the update and warns (but still returns) if the
+    stored content diverges.
+    """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     client = app_ctx.client
 
@@ -623,7 +642,13 @@ async def block_update(ctx: Context, uuid: str, content: str) -> str:
 
 
 @mcp.tool()
-async def block_delete(ctx: Context, uuid: str) -> str:
+async def block_delete(ctx: Context, uuid: UuidArg) -> str:
+    """Delete a block and its entire subtree by UUID.
+
+    Permanently removes the block AND all of its child blocks. There is no undo /
+    soft-delete — verify the UUID beforehand with `get_block` if unsure. The
+    block is identified by UUID, not page name.
+    """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     client = app_ctx.client
 
@@ -636,7 +661,14 @@ async def block_delete(ctx: Context, uuid: str) -> str:
 
 
 @mcp.tool()
-async def delete_page(ctx: Context, name: str) -> str:
+async def delete_page(ctx: Context, name: PageNameArg) -> str:
+    """Delete a page by name. PERMANENT and irreversible.
+
+    Removes the page and all of its blocks. There is no undo / soft-delete /
+    trash. Verify the page exists first (e.g. via `search_pages` or `get_page`)
+    if you are uncertain. Pass `name` with natural casing; Logseq resolves it
+    case-insensitively.
+    """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     client = app_ctx.client
 
@@ -649,7 +681,11 @@ async def delete_page(ctx: Context, name: str) -> str:
 
 
 @mcp.tool()
-async def rename_page(ctx: Context, old_name: str, new_name: str) -> str:
+async def rename_page(
+    ctx: Context,
+    old_name: Annotated[str, Field(description="Current page name (natural casing). Must already exist.")],
+    new_name: Annotated[str, Field(description="Desired new page name with natural casing. Becomes the display name; do NOT lowercase. Must not already exist.")],
+) -> str:
     """Rename a page from old_name to new_name.
 
     Pass `new_name` with natural casing and orthography (for example "Renamed
@@ -679,7 +715,18 @@ async def rename_page(ctx: Context, old_name: str, new_name: str) -> str:
 
 
 @mcp.tool()
-async def move_block(ctx: Context, uuid: str, target_uuid: str, position: str) -> str:
+async def move_block(ctx: Context, uuid: UuidArg, target_uuid: UuidArg, position: MovePositionArg) -> str:
+    """Move a block (with its subtree) to a new position relative to a target block.
+
+    `position` determines placement relative to `target_uuid`:
+    - `"before"` — insert as the preceding sibling of the target.
+    - `"after"` — insert as the following sibling of the target.
+    - `"child"` — insert as a CHILD of the target (indenting one level deeper).
+
+    The moved block brings its entire child subtree along. Both blocks are
+    identified by UUID. May move a block across pages (the destination page is
+    determined by the target block's page). Verifies the move afterwards.
+    """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     client = app_ctx.client
 
@@ -724,6 +771,13 @@ async def move_block(ctx: Context, uuid: str, target_uuid: str, position: str) -
 
 @mcp.tool()
 async def journal_today(ctx: Context) -> str:
+    """Get-or-create TODAY'S journal page and return its block tree.
+
+    Creates the journal page for today's date if it does not yet exist, then
+    returns the page entity and its current blocks. Takes no arguments. Use
+    `journal_append` to add content to a specific date's journal, or
+    `journal_range` to read a span of journal days.
+    """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     client = app_ctx.client
 
@@ -766,7 +820,16 @@ def _iter_inclusive_dates(start: date, end: date, *, max_days: int = _JOURNAL_RA
 
 
 @mcp.tool()
-async def journal_append(ctx: Context, date: str, blocks: list | str | dict) -> str:
+async def journal_append(ctx: Context, date: IsoDateArg, blocks: BlocksArg) -> str:
+    """Append blocks to a journal page for a given DATE, creating it if needed.
+
+    `date` selects WHICH day's journal to write to (ISO yyyy-MM-dd), unlike
+    `block_append` which targets a named page. If the journal page for that date
+    does not exist yet, it is created first. Accepts the same block formats as
+    `block_append` (flat strings or nested objects with content/properties/
+    children). For today's journal without specifying a date, use `journal_today`
+    followed by `block_append`, or call this with today's date.
+    """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     client = app_ctx.client
 
@@ -793,7 +856,19 @@ async def journal_append(ctx: Context, date: str, blocks: list | str | dict) -> 
 
 
 @mcp.tool()
-async def journal_range(ctx: Context, start_date: str, end_date: str) -> str:
+async def journal_range(
+    ctx: Context,
+    start_date: Annotated[str, Field(description="Start date inclusive, ISO yyyy-MM-dd (e.g. '2026-09-01').")],
+    end_date: Annotated[str, Field(description="End date inclusive, ISO yyyy-MM-dd (e.g. '2026-09-22'). Must be on or after start_date.")],
+) -> str:
+    """Return journal entries for all EXISTING journal pages between two dates.
+
+    Iterates every calendar day from `start_date` to `end_date` INCLUSIVE, and
+    returns the block trees for days that HAVE a journal page. Days with no
+    journal page are skipped (not an error). Range is capped at 366 days.
+    Entries are fetched in parallel. Use this to review a period of daily notes;
+    for a single day use `journal_today` or `get_page` with the date as name.
+    """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     client = app_ctx.client
 

@@ -17,11 +17,19 @@ Python MCP server for Logseq.
 | `health` | Ping Logseq and return graph name and page count |
 | `get_page` | Return a page entity and deduplicated block tree by page name |
 | `get_block` | Get a single block by UUID |
-| `list_pages` | List pages with optional namespace filter (truncated by limit) |
-| `search_pages` | Find pages by a name fragment; returns full paths for nested/namespace pages |
+| `list_pages` | List pages with optional namespace filter (truncated by limit); `slim=True` drops properties |
+| `search_pages` | Find pages by a name fragment; returns full paths for nested/namespace pages; `slim=True` drops properties |
 | `list_namespace` | List every page beneath a namespace without truncation |
 | `list_namespace_tree` | Browse a namespace as a hierarchical tree (parents with nested children) |
 | `get_references` | Get backlinks to a page (pages that reference this page) |
+| `forward_links` | List the pages that THIS page links to (outbound wikilinks) |
+| `graph_stats` | Whole-graph orientation snapshot: page counts, top namespaces (call first) |
+| `page_outline` | Flat truncated outline skeleton of a page (progressive disclosure, lighter than `get_page`) |
+| `expand_references` | Expand the backlink neighborhood around a page by up to N BFS hops |
+| `cross_reference` | Pages that link to BOTH of two pages (intersection of their backlinks) |
+| `namespace_stats` | Granular stats for one namespace subtree: depth distribution, child namespaces |
+| `search_blocks` | Full-text search over BLOCK CONTENTS (find lore by substance, not just page names) |
+| `query` | Run a Datalog query against Logseq's indexed DB; inline values via `%1`,`%2` placeholders |
 | `page_create` | Create a new page with optional properties and initial blocks |
 | `block_append` | Append blocks to a page; accepts flat strings or nested objects with content, properties, and children |
 | `block_prepend` | Prepend blocks to the top of a page (above existing content) |
@@ -76,6 +84,29 @@ expected first-run result:
 - Process starts without Python traceback.
 - MCP server stays attached to stdio while the client is connected.
 - `health` requests return `{"status":"ok",...}` from your MCP client.
+
+## Transports
+
+The default transport is **stdio** (what Claude Desktop and most local MCP clients expect). Streamable HTTP is available for remote/networked setups.
+
+```bash
+# stdio (default) — no flags needed
+LOGSEQ_API_TOKEN=<token> uv run ya-logseq-mcp
+
+# streamable HTTP on 127.0.0.1:8765 (endpoint /mcp)
+LOGSEQ_API_TOKEN=<token> uv run ya-logseq-mcp --transport http
+# or equivalently: --transport streamable-http
+```
+
+Options (flags override env vars):
+
+| Flag | Env | Default | Notes |
+|------|-----|---------|-------|
+| `--transport` | `MCP_TRANSPORT` | `stdio` | `stdio` \| `sse` \| `streamable-http` (`http` aliases the last) |
+| `--host` | `MCP_HOST` | `127.0.0.1` | Bind host for non-stdio transports |
+| `--port` | `MCP_PORT` | `8765` | Bind port for non-stdio transports |
+
+`uv run ya-logseq-mcp --help` prints usage. HTTP binds to loopback by default; if you expose it on `0.0.0.0`, put it behind an authenticated reverse proxy (the server does not enforce its own bearer token in this release).
 
 ## MCP Client Config
 
