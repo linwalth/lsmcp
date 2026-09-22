@@ -136,8 +136,11 @@ def test_missing_token_raises(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_semaphore_serializes(token_env):
-    """Two concurrent _call() invocations must complete sequentially (semaphore=1)."""
+async def test_calls_overlap_under_bounded_concurrency(token_env):
+    """Two concurrent _call() invocations overlap because the semaphore caps
+    concurrency at 4 (chosen so journal_range can fan out), not serialize at 1.
+    With room for both, each transport starts before either finishes:
+    ['start', 'start', 'end', 'end']."""
     from logseq_mcp.client import LogseqClient
     order = []
 
@@ -157,6 +160,5 @@ async def test_semaphore_serializes(token_env):
             client._call("method.b"),
         )
 
-    # With semaphore(1): start,end,start,end (sequential)
-    # Without semaphore: start,start,end,end (concurrent)
-    assert order == ["start", "end", "start", "end"]
+    # semaphore(4): start,start,end,end (overlapping, not sequential)
+    assert order == ["start", "start", "end", "end"]
