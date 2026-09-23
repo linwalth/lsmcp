@@ -675,6 +675,28 @@ async def test_validate_page_detects_title_heading(token_env):
     assert "title_heading" in rules
 
 
+async def test_validate_page_detects_indented_heading(token_env):
+    from logseq_mcp.tools.nav import validate_page
+
+    blocks = [
+        {"id": 1, "uuid": "b1", "content": "intro", "children": [
+            {"id": 2, "uuid": "b2", "content": "### Nested Heading", "children": []},
+        ]},
+    ]
+
+    async def fake_call(method, *args):
+        if method == "logseq.Editor.getPageBlocksTree":
+            return blocks
+        if method == "logseq.Editor.getAllPages":
+            return []
+        raise AssertionError(method)
+
+    ctx = _make_ctx(fake_call)
+    out = json.loads(await validate_page(ctx, "test"))
+    rules = [v["rule"] for v in out["violations"]]
+    assert "indented_heading" in rules
+
+
 async def test_validate_page_clean_passes(token_env):
     from logseq_mcp.tools.nav import validate_page
 
@@ -746,6 +768,32 @@ async def test_orphan_report_skips_pages_with_backlinks(token_env):
     names = [o["name"] for o in out["orphans"]]
     assert "orphan page" in names
     assert "linked page" not in names
+
+
+async def test_orphan_report_by_classification_reflects_total(token_env):
+    from logseq_mcp.tools.nav import orphan_report
+
+    pages = [
+        {"id": 1, "uuid": "p1", "name": "kreaturen/monster/m1", "journal?": False},
+        {"id": 2, "uuid": "p2", "name": "kreaturen/monster/m2", "journal?": False},
+        {"id": 3, "uuid": "p3", "name": "kreaturen/monster/m3", "journal?": False},
+        {"id": 4, "uuid": "p4", "name": "quests/q1", "journal?": False},
+    ]
+
+    async def fake_call(method, *args):
+        if method == "logseq.Editor.getAllPages":
+            return pages
+        if method == "logseq.Editor.getPageLinkedReferences":
+            return []
+        raise AssertionError(method)
+
+    ctx = _make_ctx(fake_call)
+    out = json.loads(await orphan_report(ctx, limit=2))
+    assert out["shown"] == 2
+    assert out["total_orphans"] == 4
+    # by_classification must reflect ALL orphans, not just the shown 2
+    assert out["by_classification"]["allowed"] == 3
+    assert out["by_classification"]["forbidden"] == 1
 
 
 async def test_orphan_report_limits_results(token_env):

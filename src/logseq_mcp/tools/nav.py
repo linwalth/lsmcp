@@ -917,7 +917,7 @@ async def validate_page(
             violations.append({
                 "severity": "high",
                 "rule": "dead_link",
-                "detail": f"[[{link}]] — target page does not exist",
+                "detail": f"[[{link}]] - target page does not exist",
                 "fix": "create the target page, or write as plain text without [[]]",
             })
 
@@ -942,6 +942,15 @@ async def validate_page(
                 "rule": "bullet_prefix",
                 "detail": f"block starts with bullet marker: {content[:50]}",
                 "fix": "remove leading '- ' or '* '; every Logseq block is already a bullet",
+            })
+
+        # Heading-indentation check (headings must be on root level, never indented)
+        if depth > 0 and stripped.startswith("#"):
+            violations.append({
+                "severity": "medium",
+                "rule": "indented_heading",
+                "detail": f"heading at depth {depth} (indented): {content[:60]}",
+                "fix": "move heading to root level (depth 0); preserve # count but remove indentation",
             })
 
         # Strip links/images before dash/quote/CJK checks (they are exempt inside links)
@@ -1040,10 +1049,9 @@ async def orphan_report(
 
     orphans.sort(key=lambda o: (o["classification"], o["name"].lower()))
     total = len(orphans)
+    by_class = Counter(o["classification"] for o in orphans)
     if limit > 0:
         orphans = orphans[:limit]
-
-    by_class = Counter(o["classification"] for o in orphans)
     return json.dumps({
         "orphans": orphans,
         "shown": len(orphans),
