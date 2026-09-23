@@ -488,21 +488,73 @@ async def test_get_conventions_has_no_encoding_section(token_env):
 
 async def test_get_namespace_map_returns_structure(token_env):
     from logseq_mcp.tools.nav import get_namespace_map
-    ctx = _make_ctx(AsyncMock())
+
+    fake_pages = [
+        {"id": 1, "uuid": "p1", "name": "schauplätze/splitter/world1", "journal?": False},
+        {"id": 2, "uuid": "p2", "name": "schauplätze/splitter/world2", "journal?": False},
+        {"id": 3, "uuid": "p3", "name": "kreaturen/npcs (recurring)/bob", "journal?": False},
+        {"id": 4, "uuid": "p4", "name": "items/sword", "journal?": False},
+        {"id": 5, "uuid": "p5", "name": "items/drogen/weed", "journal?": False},
+        {"id": 6, "uuid": "p6", "name": "sep 22nd, 2026", "journal?": True},
+    ]
+
+    async def fake_call(method, *args):
+        assert method == "logseq.Editor.getAllPages"
+        return fake_pages
+
+    ctx = _make_ctx(fake_call)
     out = json.loads(await get_namespace_map(ctx))
+
     assert "schauplätze" in out
     assert "kreaturen" in out
     assert "items" in out
-    assert "quests" in out
-    assert "blaupausen" in out
-    kr = out["kreaturen"]
-    assert "npcs_recurring" in kr
-    assert "npcs_regular" in kr
-    assert "npcs_retired" in kr
+    assert "quests" in out  # in static map, not live -> page_count 0
+
+    # live counts
+    assert out["schauplätze"]["page_count"] == 2
+    assert out["kreaturen"]["page_count"] == 1
+    assert out["items"]["page_count"] == 2
+
+    # static-only namespace has page_count 0
+    assert out["quests"]["page_count"] == 0
+    assert out["quests"]["expected"] is True
+
+    # sub-namespaces discovered live
+    spl_subs = {s["name"]: s["page_count"] for s in out["schauplätze"]["sub_namespaces"]}
+    assert spl_subs["splitter"] == 2
+
+    item_subs = {s["name"]: s["page_count"] for s in out["items"]["sub_namespaces"]}
+    assert item_subs["sword"] == 1
+    assert item_subs["drogen"] == 1
+
+    # purpose carried from static map
+    assert out["items"]["purpose"] is not None
+    assert out["quests"]["purpose"] is not None
+
+
+async def test_get_namespace_map_flags_adhoc_namespaces(token_env):
+    from logseq_mcp.tools.nav import get_namespace_map
+
+    fake_pages = [
+        {"id": 1, "uuid": "p1", "name": "randomstuff/page", "journal?": False},
+    ]
+
+    async def fake_call(method, *args):
+        return fake_pages
+
+    ctx = _make_ctx(fake_call)
+    out = json.loads(await get_namespace_map(ctx))
+    assert "randomstuff" in out
+    assert out["randomstuff"]["expected"] is False
+    assert out["randomstuff"]["purpose"] is None
 
 
 async def test_get_namespace_map_preserves_umlaute(token_env):
     from logseq_mcp.tools.nav import get_namespace_map
-    ctx = _make_ctx(AsyncMock())
+
+    async def fake_call(method, *args):
+        return [{"id": 1, "uuid": "p1", "name": "schauplätze/x", "journal?": False}]
+
+    ctx = _make_ctx(fake_call)
     raw = await get_namespace_map(ctx)
-    assert "ä" in raw or "\\u00e4" in raw  # umlaut survives JSON serialization
+    assert "ä" in raw or "\\u00e4" in raw

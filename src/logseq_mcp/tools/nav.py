@@ -741,12 +741,74 @@ async def get_conventions(ctx: Context) -> str:
 
 @mcp.tool()
 async def get_namespace_map(ctx: Context) -> str:
-    """Return the graph's NAMESPACE ARCHITECTURE as structured JSON.
+    """Return the graph's NAMESPACE ARCHITECTURE, merging static conventions
+    with LIVE page counts from the graph.
 
-    Maps each top-level namespace to its purpose and sub-namespaces, so the agent
-    knows WHERE to place new pages (e.g. recurring NPCs under
-    Kreaturen/NPCs (Recurring)/, items under Items/, quests under Quests/). Call
-    this before page_create or rename_page to ensure correct placement.
+    Combines two layers:
+    - STATIC PURPOSE: the intended architecture (where each page type belongs,
+      e.g. recurring NPCs under Kreaturen/NPCs (Recurring)/).
+    - LIVE DISCOVERY: actual top-level namespaces and their sub-namespaces,
+      with page counts, queried from getAllPages.
+
+    Each namespace entry carries: `purpose` (from conventions, if known),
+    `page_count` (live), `sub_namespaces` (live, with counts), and `expected`
+    (true if the namespace appears in the static architecture, false if it is
+    unexpected/ad-hoc). Call this before page_create or rename_page to ensure
+    correct placement.
     """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    client = app_ctx.client
+
     logger.info("get_namespace_map")
-    return json.dumps(_NAMESPACE_MAP, ensure_ascii=False)
+
+    raw = await client._call("logseq.Editor.getAllPages")
+    pages_raw = raw if isinstance(raw, list) else []
+
+    # Collect live top-level namespaces and their sub-namespaces with counts.
+    top_counts: Counter[str] = Counter()
+    sub_counts: dict[str, Counter[str]] = {}
+
+    for page_raw in pages_raw:
+        try:
+            page = PageEntity.model_validate(page_raw)
+        except Exception:
+            continue
+        if not page.name or page.journal:
+            continue
+        parts = page.name.split("/", 2)
+        top = parts[0]
+        top_counts[top] += 1
+        if len(parts) >= 2:
+            sub_key = parts[1] if len(parts) == 2 else parts[1]
+            sub_counts.setdefault(top, Counter())[sub_key] += 1
+
+    # Build merged result.
+    result: dict[str, dict] = {}
+    all_namespaces = set(top_counts.keys()) | set(_NAMESPACE_MAP.keys())
+
+    for ns in sorted(all_namespaces):
+        purpose = _NAMESPACE_MAP.get(ns)
+        entry: dict = {
+            "page_count": top_counts.get(ns, 0),
+            "expected": ns in _NAMESPACE_MAP,
+        }
+        if isinstance(purpose, dict):
+            entry["purpose"] = "; ".join(str(v) for v in purpose.values())
+            entry["sub_namespace_purposes"] = purpose
+        elif isinstance(purpose, str):
+            entry["purpose"] = purpose
+        elif purpose is None:
+            entry["purpose"] = None
+
+        subs_live = sub_counts.get(ns, Counter())
+        if subs_live:
+            entry["sub_namespaces"] = [
+                {"name": sn, "page_count": cnt}
+                for sn, cnt in sorted(subs_live.items())
+            ]
+        else:
+            entry["sub_namespaces"] = []
+
+        result[ns] = entry
+
+    return json.dumps(result, ensure_ascii=False)
