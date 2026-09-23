@@ -32,7 +32,10 @@ Python MCP server for Logseq.
 | `list_blueprints` | List page-structure templates under the `blaupausen/` namespace |
 | `get_blueprint` | Fetch the headed-block layout of a blueprint so new pages match graph conventions |
 | `get_conventions` | Structured JSON of all writing conventions (typography, structure, links, statblock schema) |
-| `get_namespace_map` | Namespace architecture map showing where each page type belongs |
+| `get_namespace_map` | Namespace architecture map (static purpose + live page counts) |
+| `validate_page` | Lint a page against conventions: dead links, em-dashes, CJK, bullet prefixes, title redundancy |
+| `orphan_report` | Report pages with zero backlinks, classified by orphan policy |
+| `similar_pages` | Find near-duplicate page names via fuzzy string matching |
 | `query` | Run a Datalog query against Logseq's indexed DB; inline values via `%1`,`%2` placeholders |
 | `page_create` | Create a new page with optional properties and initial blocks |
 | `block_append` | Append blocks to a page; accepts flat strings or nested objects with content, properties, and children |

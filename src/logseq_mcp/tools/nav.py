@@ -19,6 +19,7 @@ import json
 import logging
 import re
 from collections import Counter, deque
+from difflib import SequenceMatcher
 from typing import Annotated
 
 from mcp import McpError
@@ -812,3 +813,298 @@ async def get_namespace_map(ctx: Context) -> str:
         result[ns] = entry
 
     return json.dumps(result, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------------------
+# Validation, orphan detection, and duplicate detection
+# ---------------------------------------------------------------------------
+
+_LINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
+_IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+_CJK_RE = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf]")
+_EM_DASH = "\u2014"
+_EN_DASH = "\u2013"
+_SMART_QUOTES = ("\u201c", "\u201d", "\u2018", "\u2019")
+
+_ORPHAN_ALLOWED_NAMESPACES = frozenset({
+    "kreaturen/monster", "kreaturen/tiere", "götter und höhere wesen",
+    "blaupausen", "spells",
+})
+_ORPHAN_FORBIDDEN_NAMESPACES = frozenset({
+    "kreaturen/npcs (recurring)", "kreaturen/npcs (regular)",
+    "quests", "items", "schauplätze",
+})
+
+
+def _classify_orphan(name: str) -> str:
+    lower = name.lower()
+    for ns in _ORPHAN_FORBIDDEN_NAMESPACES:
+        if lower.startswith(ns):
+            return "forbidden"
+    for ns in _ORPHAN_ALLOWED_NAMESPACES:
+        if lower.startswith(ns):
+            return "allowed"
+    return "review"
+
+
+def _strip_links_and_images(text: str) -> str:
+    text = _IMAGE_RE.sub("", text)
+    text = _LINK_RE.sub("", text)
+    return text
+
+
+def _extract_outgoing_links(blocks: list[BlockEntity]) -> list[str]:
+    links: list[str] = []
+    for block in blocks:
+        for m in _LINK_RE.finditer(block.content or ""):
+            raw = m.group(1)
+            if "|" in raw:
+                raw = raw.rsplit("|", 1)[0]
+            links.append(raw.strip())
+        if block.children:
+            links.extend(_extract_outgoing_links(block.children))
+    return links
+
+
+@mcp.tool()
+async def validate_page(
+    ctx: Context,
+    name: Annotated[str, Field(description="Page name to validate (natural casing).")],
+) -> str:
+    """Lint a single page against the graph's writing conventions.
+
+    Checks for: DEAD LINKS (outgoing [[...]] links whose target page does not
+    exist), EM/EN-DASHES in prose (outside links/images), SMART QUOTES, CJK
+    characters, BULLET-PREFIX contamination ('- ' or '* ' at block start),
+    TITLE-HEADING redundancy (first block repeats the page name). Returns a
+    structured violations list with severity, location, and a suggested fix.
+    Call this AFTER page_create or block_append to catch mistakes before they
+    propagate.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    client = app_ctx.client
+
+    logger.info("validate_page: %s", name)
+
+    raw = await client._call("logseq.Editor.getPageBlocksTree", name)
+    blocks_raw = raw if isinstance(raw, list) else []
+
+    parsed: list[BlockEntity] = []
+    for b in blocks_raw:
+        try:
+            parsed.append(BlockEntity.model_validate(b))
+        except Exception:
+            continue
+
+    # Build name-set for dead-link check (cached getAllPages).
+    all_pages_raw = await client._call("logseq.Editor.getAllPages")
+    existing_names: set[str] = set()
+    if isinstance(all_pages_raw, list):
+        for p in all_pages_raw:
+            try:
+                page = PageEntity.model_validate(p)
+                if page.name:
+                    existing_names.add(page.name.lower())
+            except Exception:
+                continue
+
+    violations: list[dict] = []
+
+    # Dead links
+    outgoing = _extract_outgoing_links(parsed)
+    for link in outgoing:
+        if link.lower() not in existing_names:
+            violations.append({
+                "severity": "high",
+                "rule": "dead_link",
+                "detail": f"[[{link}]] — target page does not exist",
+                "fix": "create the target page, or write as plain text without [[]]",
+            })
+
+    # Content scans
+    def scan_block(block: BlockEntity, depth: int) -> None:
+        content = block.content or ""
+
+        # Title-heading check (first top-level block only)
+        if depth == 0 and content.strip().lower() == name.strip().lower():
+            violations.append({
+                "severity": "low",
+                "rule": "title_heading",
+                "detail": f"first block repeats page name '{name}'",
+                "fix": "remove the redundant title; Logseq displays the file name",
+            })
+
+        # Bullet-prefix check
+        stripped = content.lstrip()
+        if stripped.startswith("- ") or stripped.startswith("* "):
+            violations.append({
+                "severity": "medium",
+                "rule": "bullet_prefix",
+                "detail": f"block starts with bullet marker: {content[:50]}",
+                "fix": "remove leading '- ' or '* '; every Logseq block is already a bullet",
+            })
+
+        # Strip links/images before dash/quote/CJK checks (they are exempt inside links)
+        prose = _strip_links_and_images(content)
+
+        if _EM_DASH in prose or _EN_DASH in prose:
+            char = _EM_DASH if _EM_DASH in prose else _EN_DASH
+            violations.append({
+                "severity": "medium",
+                "rule": "em_en_dash",
+                "detail": f"found '{char}' in: {content[:60]}",
+                "fix": "replace with '. ' (sentence), ', ' (apposition), '-' (range), or space (stats)",
+            })
+
+        for sq in _SMART_QUOTES:
+            if sq in prose:
+                violations.append({
+                    "severity": "low",
+                    "rule": "smart_quote",
+                    "detail": f"found smart quote '{sq}' in: {content[:60]}",
+                    "fix": "use ASCII '\"' or \"'\"",
+                })
+
+        if _CJK_RE.search(prose):
+            cjk_match = _CJK_RE.search(prose)
+            violations.append({
+                "severity": "high",
+                "rule": "cjk_character",
+                "detail": f"found CJK character '{cjk_match.group()}' in: {content[:60]}" if cjk_match else "CJK detected",
+                "fix": "transliterate or translate; no Chinese characters in wiki content",
+            })
+
+        for child in block.children or []:
+            scan_block(child, depth + 1)
+
+    for block in parsed:
+        scan_block(block, 0)
+
+    return json.dumps({
+        "page": name,
+        "violations": violations,
+        "count": len(violations),
+        "passed": len(violations) == 0,
+    }, ensure_ascii=False)
+
+
+@mcp.tool()
+async def orphan_report(
+    ctx: Context,
+    limit: Annotated[int, Field(description="Max orphan pages to return (0=all). Default 100.")] = 100,
+) -> str:
+    """Report pages with ZERO incoming backlinks, classified by orphan policy.
+
+    Iterates all non-journal pages and checks each for backlinks via
+    getPageLinkedReferences. Pages with no incoming links are orphans. Each is
+    classified as 'allowed' (Monster, Tiere, Götter, Blaupausen, Spells —
+    intentional reference material), 'forbidden' (NPCs, Quests, Items, Orte —
+    should be linked from a hub), or 'review' (everything else). Call this for
+    graph hygiene — orphaned story-relevant pages indicate missing connections.
+    Runs many API calls; expect ~10-20 seconds on a large graph.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    client = app_ctx.client
+
+    logger.info("orphan_report: limit=%d", limit)
+
+    all_pages_raw = await client._call("logseq.Editor.getAllPages")
+    if not isinstance(all_pages_raw, list):
+        return json.dumps({"orphans": [], "count": 0})
+
+    pages: list[PageEntity] = []
+    for p in all_pages_raw:
+        try:
+            page = PageEntity.model_validate(p)
+            if page.name and not page.journal:
+                pages.append(page)
+        except Exception:
+            continue
+
+    orphans: list[dict] = []
+
+    async def check_one(page: PageEntity) -> dict | None:
+        refs = await client._call("logseq.Editor.getPageLinkedReferences", page.name)
+        if isinstance(refs, list) and len(refs) > 0:
+            return None
+        return {
+            "name": page.display_name or page.name,
+            "classification": _classify_orphan(page.name),
+        }
+
+    tasks = [check_one(p) for p in pages]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for r in results:
+        if isinstance(r, dict):
+            orphans.append(r)
+
+    orphans.sort(key=lambda o: (o["classification"], o["name"].lower()))
+    total = len(orphans)
+    if limit > 0:
+        orphans = orphans[:limit]
+
+    by_class = Counter(o["classification"] for o in orphans)
+    return json.dumps({
+        "orphans": orphans,
+        "shown": len(orphans),
+        "total_orphans": total,
+        "by_classification": dict(by_class),
+    }, ensure_ascii=False)
+
+
+@mcp.tool()
+async def similar_pages(
+    ctx: Context,
+    threshold: Annotated[float, Field(description="Similarity ratio threshold 0-1 (default 0.85). Higher = stricter match.")] = 0.85,
+    limit: Annotated[int, Field(description="Max pairs to return (0=all). Default 50.")] = 50,
+) -> str:
+    """Find near-duplicate page names via fuzzy string matching.
+
+    Compares all non-journal page names pairwise using difflib similarity ratio.
+    Catches casing-induced duplicates ('items/sword' vs 'Items/Sword'),
+    spelling variants, and accidental near-collisions. Returns pairs with their
+    similarity score. Call this after bulk imports or when suspecting duplicate
+    pages. Threshold 0.85 is strict enough to catch typos but loose enough for
+    meaningful near-misses.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    client = app_ctx.client
+
+    if threshold < 0 or threshold > 1:
+        raise McpError(ErrorData(code=INTERNAL_ERROR, message="threshold must be between 0 and 1"))
+
+    logger.info("similar_pages: threshold=%.2f limit=%d", threshold, limit)
+
+    all_pages_raw = await client._call("logseq.Editor.getAllPages")
+    if not isinstance(all_pages_raw, list):
+        return json.dumps({"pairs": [], "count": 0})
+
+    names: list[str] = []
+    for p in all_pages_raw:
+        try:
+            page = PageEntity.model_validate(p)
+            if page.name and not page.journal:
+                names.append(page.display_name or page.name)
+        except Exception:
+            continue
+
+    pairs: list[dict] = []
+    names_sorted = sorted(names, key=str.lower)
+    n = len(names_sorted)
+    for i in range(n):
+        for j in range(i + 1, n):
+            ratio = SequenceMatcher(None, names_sorted[i].lower(), names_sorted[j].lower()).ratio()
+            if ratio >= threshold and ratio < 1.0:
+                pairs.append({
+                    "a": names_sorted[i],
+                    "b": names_sorted[j],
+                    "similarity": round(ratio, 3),
+                })
+        if limit > 0 and len(pairs) >= limit:
+            break
+
+    pairs.sort(key=lambda p: p["similarity"], reverse=True)
+    if limit > 0:
+        pairs = pairs[:limit]
+
+    return json.dumps({"pairs": pairs, "count": len(pairs)}, ensure_ascii=False)

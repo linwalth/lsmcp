@@ -558,3 +558,257 @@ async def test_get_namespace_map_preserves_umlaute(token_env):
     ctx = _make_ctx(fake_call)
     raw = await get_namespace_map(ctx)
     assert "ä" in raw or "\\u00e4" in raw
+
+
+# ---------------------------------------------------------------------------
+# validate_page
+# ---------------------------------------------------------------------------
+
+async def test_validate_page_detects_dead_link(token_env):
+    from logseq_mcp.tools.nav import validate_page
+
+    blocks = [{"id": 1, "uuid": "b1", "content": "see [[Ghost Page]]", "children": []}]
+    pages = [{"id": 1, "uuid": "p1", "name": "real page", "journal?": False}]
+
+    async def fake_call(method, *args):
+        if method == "logseq.Editor.getPageBlocksTree":
+            return blocks
+        if method == "logseq.Editor.getAllPages":
+            return pages
+        raise AssertionError(method)
+
+    ctx = _make_ctx(fake_call)
+    out = json.loads(await validate_page(ctx, "real page"))
+    rules = [v["rule"] for v in out["violations"]]
+    assert "dead_link" in rules
+    assert out["passed"] is False
+
+
+async def test_validate_page_detects_em_dash(token_env):
+    from logseq_mcp.tools.nav import validate_page
+
+    blocks = [{"id": 1, "uuid": "b1", "content": "something \u2014 or other", "children": []}]
+
+    async def fake_call(method, *args):
+        if method == "logseq.Editor.getPageBlocksTree":
+            return blocks
+        if method == "logseq.Editor.getAllPages":
+            return []
+        raise AssertionError(method)
+
+    ctx = _make_ctx(fake_call)
+    out = json.loads(await validate_page(ctx, "test page"))
+    rules = [v["rule"] for v in out["violations"]]
+    assert "em_en_dash" in rules
+
+
+async def test_validate_page_exempt_dashes_inside_links(token_env):
+    from logseq_mcp.tools.nav import validate_page
+
+    blocks = [{"id": 1, "uuid": "b1", "content": "link [[Some\u2013Page]] here", "children": []}]
+    pages = [{"id": 1, "uuid": "p1", "name": "some\u2013page", "journal?": False}]
+
+    async def fake_call(method, *args):
+        if method == "logseq.Editor.getPageBlocksTree":
+            return blocks
+        if method == "logseq.Editor.getAllPages":
+            return pages
+        raise AssertionError(method)
+
+    ctx = _make_ctx(fake_call)
+    out = json.loads(await validate_page(ctx, "test page"))
+    rules = [v["rule"] for v in out["violations"]]
+    assert "em_en_dash" not in rules
+
+
+async def test_validate_page_detects_cjk(token_env):
+    from logseq_mcp.tools.nav import validate_page
+
+    blocks = [{"id": 1, "uuid": "b1", "content": "text with \u9f8d dragon", "children": []}]
+
+    async def fake_call(method, *args):
+        if method == "logseq.Editor.getPageBlocksTree":
+            return blocks
+        if method == "logseq.Editor.getAllPages":
+            return []
+        raise AssertionError(method)
+
+    ctx = _make_ctx(fake_call)
+    out = json.loads(await validate_page(ctx, "test"))
+    rules = [v["rule"] for v in out["violations"]]
+    assert "cjk_character" in rules
+
+
+async def test_validate_page_detects_bullet_prefix(token_env):
+    from logseq_mcp.tools.nav import validate_page
+
+    blocks = [{"id": 1, "uuid": "b1", "content": "- item text", "children": []}]
+
+    async def fake_call(method, *args):
+        if method == "logseq.Editor.getPageBlocksTree":
+            return blocks
+        if method == "logseq.Editor.getAllPages":
+            return []
+        raise AssertionError(method)
+
+    ctx = _make_ctx(fake_call)
+    out = json.loads(await validate_page(ctx, "test"))
+    rules = [v["rule"] for v in out["violations"]]
+    assert "bullet_prefix" in rules
+
+
+async def test_validate_page_detects_title_heading(token_env):
+    from logseq_mcp.tools.nav import validate_page
+
+    blocks = [{"id": 1, "uuid": "b1", "content": "My Page", "children": []}]
+
+    async def fake_call(method, *args):
+        if method == "logseq.Editor.getPageBlocksTree":
+            return blocks
+        if method == "logseq.Editor.getAllPages":
+            return []
+        raise AssertionError(method)
+
+    ctx = _make_ctx(fake_call)
+    out = json.loads(await validate_page(ctx, "My Page"))
+    rules = [v["rule"] for v in out["violations"]]
+    assert "title_heading" in rules
+
+
+async def test_validate_page_clean_passes(token_env):
+    from logseq_mcp.tools.nav import validate_page
+
+    blocks = [{"id": 1, "uuid": "b1", "content": "Valid content with [[real page]] link.", "children": []}]
+    pages = [{"id": 1, "uuid": "p1", "name": "real page", "journal?": False}]
+
+    async def fake_call(method, *args):
+        if method == "logseq.Editor.getPageBlocksTree":
+            return blocks
+        if method == "logseq.Editor.getAllPages":
+            return pages
+        raise AssertionError(method)
+
+    ctx = _make_ctx(fake_call)
+    out = json.loads(await validate_page(ctx, "test page"))
+    assert out["passed"] is True
+    assert out["count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# orphan_report
+# ---------------------------------------------------------------------------
+
+async def test_orphan_report_classifies_correctly(token_env):
+    from logseq_mcp.tools.nav import orphan_report
+
+    pages = [
+        {"id": 1, "uuid": "p1", "name": "kreaturen/monster/drache", "journal?": False},
+        {"id": 2, "uuid": "p2", "name": "kreaturen/npcs (regular)/bob", "journal?": False},
+        {"id": 3, "uuid": "p3", "name": "quests/main quest", "journal?": False},
+        {"id": 4, "uuid": "p4", "name": "misc/random", "journal?": False},
+    ]
+
+    async def fake_call(method, *args):
+        if method == "logseq.Editor.getAllPages":
+            return pages
+        if method == "logseq.Editor.getPageLinkedReferences":
+            return []
+        raise AssertionError(method)
+
+    ctx = _make_ctx(fake_call)
+    out = json.loads(await orphan_report(ctx))
+    cls = {o["name"]: o["classification"] for o in out["orphans"]}
+    assert cls["kreaturen/monster/drache"] == "allowed"
+    assert cls["kreaturen/npcs (regular)/bob"] == "forbidden"
+    assert cls["quests/main quest"] == "forbidden"
+    assert cls["misc/random"] == "review"
+
+
+async def test_orphan_report_skips_pages_with_backlinks(token_env):
+    from logseq_mcp.tools.nav import orphan_report
+
+    pages = [
+        {"id": 1, "uuid": "p1", "name": "linked page", "journal?": False},
+        {"id": 2, "uuid": "p2", "name": "orphan page", "journal?": False},
+    ]
+
+    async def fake_call(method, *args):
+        if method == "logseq.Editor.getAllPages":
+            return pages
+        if method == "logseq.Editor.getPageLinkedReferences":
+            if args[0] == "linked page":
+                return [["ref", []]]
+            return []
+        raise AssertionError(method)
+
+    ctx = _make_ctx(fake_call)
+    out = json.loads(await orphan_report(ctx))
+    names = [o["name"] for o in out["orphans"]]
+    assert "orphan page" in names
+    assert "linked page" not in names
+
+
+async def test_orphan_report_limits_results(token_env):
+    from logseq_mcp.tools.nav import orphan_report
+
+    pages = [{"id": i, "uuid": f"p{i}", "name": f"kreaturen/monster/m{i}", "journal?": False} for i in range(10)]
+
+    async def fake_call(method, *args):
+        if method == "logseq.Editor.getAllPages":
+            return pages
+        if method == "logseq.Editor.getPageLinkedReferences":
+            return []
+        raise AssertionError(method)
+
+    ctx = _make_ctx(fake_call)
+    out = json.loads(await orphan_report(ctx, limit=3))
+    assert out["shown"] == 3
+    assert out["total_orphans"] == 10
+
+
+# ---------------------------------------------------------------------------
+# similar_pages
+# ---------------------------------------------------------------------------
+
+async def test_similar_pages_finds_near_duplicates(token_env):
+    from logseq_mcp.tools.nav import similar_pages
+
+    pages = [
+        {"id": 1, "uuid": "p1", "name": "items/sword", "journal?": False},
+        {"id": 2, "uuid": "p2", "name": "items/swurd", "journal?": False},
+        {"id": 3, "uuid": "p3", "name": "kreaturen/drache", "journal?": False},
+    ]
+
+    async def fake_call(method, *args):
+        assert method == "logseq.Editor.getAllPages"
+        return pages
+
+    ctx = _make_ctx(fake_call)
+    out = json.loads(await similar_pages(ctx, threshold=0.7))
+    pair_names = [(p["a"], p["b"]) for p in out["pairs"]]
+    assert any(("items/sword", "items/swurd") == pn or ("items/swurd", "items/sword") == pn for pn in pair_names)
+
+
+async def test_similar_pages_excludes_identical(token_env):
+    from logseq_mcp.tools.nav import similar_pages
+
+    pages = [
+        {"id": 1, "uuid": "p1", "name": "dup", "journal?": False},
+        {"id": 2, "uuid": "p2", "name": "dup", "journal?": False},
+    ]
+
+    async def fake_call(method, *args):
+        return pages
+
+    ctx = _make_ctx(fake_call)
+    out = json.loads(await similar_pages(ctx, threshold=0.5))
+    assert out["count"] == 0
+
+
+async def test_similar_pages_threshold_validation(token_env):
+    from logseq_mcp.tools.nav import similar_pages
+    from mcp import McpError
+
+    ctx = _make_ctx(AsyncMock())
+    with pytest.raises(McpError):
+        await similar_pages(ctx, threshold=1.5)
