@@ -495,7 +495,12 @@ async def page_create(
     CASING: match the casing of EXISTING pages in the same namespace. Use
     `search_pages` or `list_namespace` first to see how sibling pages are named.
     Logseq file-graphs store names case-insensitively, but consistent casing
-    avoids confusion. Do NOT slugify or arbitrarily change casing.
+    avoids confusion. Do NOT slugify or arbitrarily change casing. When `name`
+    contains uppercase letters, the tool automatically renames the freshly
+    created page to itself — this is a workaround for a Logseq API quirk where
+    `createPage` does not set the display name (`original_name`), causing it to
+    show as the lowercase internal slug until a rename forces the field to
+    populate.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     client = app_ctx.client
@@ -519,6 +524,16 @@ async def page_create(
     )
     if created is None:
         raise McpError(ErrorData(code=INTERNAL_ERROR, message=f"failed to create page: {name}"))
+
+    # Logseq's createPage does not set original_name, leaving the display name
+    # as the lowercase internal slug. Renaming to the same name forces Logseq to
+    # populate original_name with the supplied casing. Skip if name is already
+    # all-lowercase (no benefit, avoids needless RPC).
+    if name != name.lower():
+        try:
+            await client._call("logseq.Editor.renamePage", name, name)
+        except McpError:
+            logger.warning("post-create rename (display-name fix) failed for %s", name)
 
     appended_count = await _append_tree_to_page(client, name, normalized_blocks)
     block_tree = await _get_page_blocks(client, name)

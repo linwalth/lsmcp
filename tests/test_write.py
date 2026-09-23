@@ -61,6 +61,8 @@ async def test_page_create_with_properties_and_initial_blocks(token_env):
         calls.append((method, args))
         if method == "logseq.Editor.createPage":
             return {"uuid": "page-uuid", "name": page_name, "properties": page_properties}
+        if method == "logseq.Editor.renamePage":
+            return {"uuid": "page-uuid", "name": page_name, "original-name": page_name}
         if method == "logseq.Editor.appendBlockInPage":
             return {"uuid": "root-1"}
         if method == "logseq.Editor.insertBatchBlock":
@@ -102,7 +104,12 @@ async def test_page_create_with_properties_and_initial_blocks(token_env):
         "logseq.Editor.createPage",
         (page_name, page_properties, {"createFirstBlock": False}),
     )
-    assert [method for method, _ in calls[1:3]] == [
+    # Mixed-case name triggers the display-name fix: rename to itself
+    assert calls[1] == (
+        "logseq.Editor.renamePage",
+        (page_name, page_name),
+    )
+    assert [method for method, _ in calls[2:4]] == [
         "logseq.Editor.appendBlockInPage",
         "logseq.Editor.insertBatchBlock",
     ]
