@@ -492,6 +492,14 @@ async def page_create(
     `blocks` so the new page matches your graph's conventions instead of an
     ad-hoc layout. For example, an item page should mirror `blaupausen/items`.
 
+    CONVENTIONS: call `get_conventions` to learn the graph's writing rules (no
+    em-dashes, ASCII quotes, heading style, link syntax, no bullet prefixes,
+    etc.) before composing content.
+
+    NAMESPACE: consult `get_namespace_map` to place the page in the correct
+    namespace (e.g. NPCs under Kreaturen/NPCs (...) with the right role tier,
+    items under Items/, quests under Quests/).
+
     CASING: match the casing of EXISTING pages in the same namespace. Use
     `search_pages` or `list_namespace` first to see how sibling pages are named.
     Logseq file-graphs store names case-insensitively, but consistent casing
@@ -570,6 +578,10 @@ async def block_append(ctx: Context, page: Annotated[str, Field(description="Exi
     Pass `page` with natural casing and orthography (for example "Meeting Notes");
     Logseq resolves page names case-insensitively but preserves the supplied casing
     as the display name, so do not lowercase it.
+
+    CONVENTIONS: call `get_conventions` to learn the graph's writing rules (no
+    em-dashes, ASCII quotes, heading style, link syntax, etc.) before appending
+    narrative content. Match the existing structure of the target page.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     client = app_ctx.client
@@ -607,6 +619,9 @@ async def block_prepend(ctx: Context, page: Annotated[str, Field(description="Ex
     the page in the order supplied, preserving the existing content below. Uses
     batch insertion for efficiency. Pass `page` with natural casing; do not
     lowercase it.
+
+    CONVENTIONS: call `get_conventions` to learn the graph's writing rules before
+    prepending content. Match the existing structure of the target page.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     client = app_ctx.client
@@ -641,6 +656,10 @@ async def block_update(ctx: Context, uuid: UuidArg, content: ContentArg) -> str:
     page name — get the UUID from `get_page`, `get_block`, or `page_outline`.
     Performs a readback after the update and warns (but still returns) if the
     stored content diverges.
+
+    CONVENTIONS: call `get_conventions` before writing narrative content. Do not
+    introduce styles that violate the graph's rules (em-dashes, smart quotes,
+    bullet prefixes, etc.).
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     client = app_ctx.client
@@ -712,6 +731,10 @@ async def rename_page(
     Page"). Logseq resolves page names case-insensitively and adopts the casing of
     `new_name` as the page's new display name, so do NOT lowercase or slugify it —
     that would make the rewritten page show up in lowercase in Logseq.
+
+    NAMESPACE: consult `get_namespace_map` to ensure the new name follows the
+    graph's namespace architecture (e.g. NPCs belong under Kreaturen/NPCs (...)
+    with the correct parenthesised role tier).
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     client = app_ctx.client
@@ -849,6 +872,8 @@ async def journal_append(ctx: Context, date: IsoDateArg, blocks: BlocksArg) -> s
     `block_append` (flat strings or nested objects with content/properties/
     children). For today's journal without specifying a date, use `journal_today`
     followed by `block_append`, or call this with today's date.
+
+    CONVENTIONS: call `get_conventions` before writing journal content.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     client = app_ctx.client
