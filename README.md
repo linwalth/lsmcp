@@ -1,14 +1,14 @@
-# ya-logseq-mcp
+# lsmcp
 
 Python MCP server for Logseq.
 
 ## What This Is
 
-`ya-logseq-mcp` exposes Logseq read/write tools over MCP stdio so MCP clients can automate page and block workflows.
+`lsmcp` exposes Logseq read/write tools over MCP stdio so MCP clients can automate page and block workflows.
 
-## Why ya-logseq-mcp
+## Why lsmcp
 
-`ya-logseq-mcp` is a Python MCP server that exposes Logseq read and write operations as MCP tools, targeting Claude Desktop and any compatible MCP stdio client. It deduplicates blocks by UUID at read time and returns lean responses by default.
+`lsmcp` is a Python MCP server that exposes Logseq read and write operations as MCP tools, targeting Claude Desktop and any compatible MCP stdio client. It deduplicates blocks by UUID at read time and returns lean responses by default.
 
 ## Tools
 
@@ -59,7 +59,7 @@ Clone or copy the repo, then run from the repo root:
 
 ```bash
 set -euo pipefail
-cd /path/to/ya-logseq-mcp
+cd /path/to/lsmcp
 python3 --version
 uv --version
 uv sync
@@ -70,7 +70,7 @@ uv sync
 Script-first launch:
 
 ```bash
-LOGSEQ_API_TOKEN=<token> uv run ya-logseq-mcp
+LOGSEQ_API_TOKEN=<token> uv run lsmcp
 ```
 
 Module fallback for troubleshooting only:
@@ -91,10 +91,10 @@ The default transport is **stdio** (what Claude Desktop and most local MCP clien
 
 ```bash
 # stdio (default) — no flags needed
-LOGSEQ_API_TOKEN=<token> uv run ya-logseq-mcp
+LOGSEQ_API_TOKEN=<token> uv run lsmcp
 
 # streamable HTTP on 127.0.0.1:8765 (endpoint /mcp)
-LOGSEQ_API_TOKEN=<token> uv run ya-logseq-mcp --transport http
+LOGSEQ_API_TOKEN=<token> uv run lsmcp --transport http
 # or equivalently: --transport streamable-http
 ```
 
@@ -106,7 +106,7 @@ Options (flags override env vars):
 | `--host` | `MCP_HOST` | `127.0.0.1` | Bind host for non-stdio transports |
 | `--port` | `MCP_PORT` | `8765` | Bind port for non-stdio transports |
 
-`uv run ya-logseq-mcp --help` prints usage. HTTP binds to loopback by default; if you expose it on `0.0.0.0`, put it behind an authenticated reverse proxy (the server does not enforce its own bearer token in this release).
+`uv run lsmcp --help` prints usage. HTTP binds to loopback by default; if you expose it on `0.0.0.0`, put it behind an authenticated reverse proxy (the server does not enforce its own bearer token in this release).
 
 ## MCP Client Config
 
@@ -115,15 +115,15 @@ Primary example for Claude Desktop (copy/paste-ready):
 ```json
 {
   "mcpServers": {
-    "ya-logseq-mcp": {
+    "lsmcp": {
       "command": "uv",
       "args": [
         "run",
         "--project",
-        "/path/to/ya-logseq-mcp",
-        "ya-logseq-mcp"
+        "/path/to/lsmcp",
+        "lsmcp"
       ],
-      "cwd": "/path/to/ya-logseq-mcp",
+      "cwd": "/path/to/lsmcp",
       "env": {
         "LOGSEQ_API_URL": "http://127.0.0.1:12315",
         "LOGSEQ_API_TOKEN": "<token>"
@@ -133,11 +133,11 @@ Primary example for Claude Desktop (copy/paste-ready):
 }
 ```
 
-Replace `/path/to/ya-logseq-mcp` with the absolute path to your cloned repo.
+Replace `/path/to/lsmcp` with the absolute path to your cloned repo.
 
 equivalent MCP clients (Cursor, VS Code MCP, custom launchers) should use the same
 `command`, `args`, `cwd`, and `env` shape.
-startup semantics: `command` + `args` must launch the `ya-logseq-mcp` entrypoint.
+startup semantics: `command` + `args` must launch the `lsmcp` entrypoint.
 parse validation for this JSON block is included in the verification commands for this plan.
 
 ## Smoke Check
@@ -165,7 +165,7 @@ Pass/fail interpretation:
 If smoke fails:
 
 1. Re-check token and API availability (`LOGSEQ_API_TOKEN`, Logseq API enabled).
-2. Re-run locally with `uv run ya-logseq-mcp --help`.
+2. Re-run locally with `uv run lsmcp --help`.
 3. Follow troubleshooting and maintainer checks in `RUNBOOK.md`.
 
 ## Docs-Only Onboarding Verification (fresh shell)
@@ -175,12 +175,12 @@ Use this when validating docs from a clean environment:
 ```bash
 env -i HOME="$HOME" PATH="$PATH" bash -lc '
   set -euo pipefail
-  cd /path/to/ya-logseq-mcp
+  cd /path/to/lsmcp
   python3 --version
   uv --version
   uv sync
   test -n "${LOGSEQ_API_TOKEN:-}" || echo "LOGSEQ_API_TOKEN not set in fresh shell"
-  uv run ya-logseq-mcp --help >/tmp/ya-logseq-mcp-help.txt
+  uv run lsmcp --help >/tmp/lsmcp-help.txt
 '
 ```
 
@@ -188,6 +188,6 @@ DOCS-01 success markers:
 
 - prereqs visible in output (`python --version`, `uv --version`)
 - install command succeeds (`uv sync`)
-- startup command reaches ready/no-traceback state (`ya-logseq-mcp --help` exits cleanly)
+- startup command reaches ready/no-traceback state (`lsmcp --help` exits cleanly)
 
 For maintainers, onboarding accuracy checks live in `RUNBOOK.md`.

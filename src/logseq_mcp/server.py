@@ -19,7 +19,7 @@ async def lifespan(app: FastMCP) -> AsyncIterator[AppContext]:
         yield AppContext(client=client)
 
 
-mcp = FastMCP("ya-logseq-mcp", lifespan=lifespan)
+mcp = FastMCP("lsmcp", lifespan=lifespan)
 
 # Import tools so they register their decorators on `mcp`
 from logseq_mcp.tools import core as _core  # noqa: E402, F401

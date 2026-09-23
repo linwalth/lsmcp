@@ -54,7 +54,7 @@ def test_server_branding_name(token_env):
             if isinstance(value, str) and value:
                 names.append(value)
 
-    assert "ya-logseq-mcp" in set(names), f"server name metadata mismatch: {sorted(set(names))}"
+    assert "lsmcp" in set(names), f"server name metadata mismatch: {sorted(set(names))}"
 
 
 def test_stderr_only(token_env, capsys):

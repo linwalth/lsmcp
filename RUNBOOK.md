@@ -1,4 +1,4 @@
-# ya-logseq-mcp Runbook
+# lsmcp Runbook
 
 Internal operational notes for maintainers.
 
@@ -7,7 +7,7 @@ User-facing install/run/config guidance lives in `README.md` and is canonical.
 ## Operational Constraints
 
 - Run commands from the repo root; `uv run` auto-detects the project via `pyproject.toml`.
-- Keep MCP server key and script naming aligned to `ya-logseq-mcp`.
+- Keep MCP server key and script naming aligned to `lsmcp`.
 - Treat `README.md` as the only onboarding source; this runbook should not duplicate setup steps.
 
 ## Troubleshooting
@@ -33,7 +33,7 @@ Run these checks after editing onboarding docs to prevent stale or incomplete gu
 ```bash
 rg -n "Requirements|Install|Run Locally|MCP Client Config|Smoke Check|equivalent MCP" README.md
 rg -n "If smoke fails|Troubleshooting|RUNBOOK" README.md
-uv run python -c 'import json,pathlib,re; t=pathlib.Path("README.md").read_text(); m=re.search(r"```json\\s*(\\{[\\s\\S]*?\\})\\s*```", t); assert m, "README MCP JSON snippet missing"; cfg=json.loads(m.group(1)); servers=cfg.get("mcpServers") or {}; assert servers, "mcpServers missing"; s=next(iter(servers.values())); missing=[k for k in ["command","args","cwd","env"] if k not in s]; assert not missing, missing; assert isinstance(s["args"], list) and s["args"], "args must be non-empty list"; joined=" ".join(str(x) for x in s["args"]); assert ("ya-logseq-mcp" in joined) or ("-m" in s["args"] and "ya_logseq_mcp.server" in joined), "startup semantics mismatch"; print("readme-config-parse-and-startup-ok")'
+uv run python -c 'import json,pathlib,re; t=pathlib.Path("README.md").read_text(); m=re.search(r"```json\\s*(\\{[\\s\\S]*?\\})\\s*```", t); assert m, "README MCP JSON snippet missing"; cfg=json.loads(m.group(1)); servers=cfg.get("mcpServers") or {}; assert servers, "mcpServers missing"; s=next(iter(servers.values())); missing=[k for k in ["command","args","cwd","env"] if k not in s]; assert not missing, missing; assert isinstance(s["args"], list) and s["args"], "args must be non-empty list"; joined=" ".join(str(x) for x in s["args"]); assert ("lsmcp" in joined) or ("-m" in s["args"] and "logseq_mcp.server" in joined), "startup semantics mismatch"; print("readme-config-parse-and-startup-ok")'
 ```
 
 ## Branding Consistency Check
@@ -41,5 +41,5 @@ uv run python -c 'import json,pathlib,re; t=pathlib.Path("README.md").read_text(
 Use this check before merging doc or metadata edits:
 
 ```bash
-rg -n "ya-logseq-mcp|^\[project\.urls\]" pyproject.toml src/logseq_mcp/server.py src/logseq_mcp/__init__.py README.md RUNBOOK.md
+rg -n "lsmcp|^\[project\.urls\]" pyproject.toml src/logseq_mcp/server.py src/logseq_mcp/__init__.py README.md RUNBOOK.md
 ```

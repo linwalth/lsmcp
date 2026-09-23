@@ -465,7 +465,7 @@ def launch_stdio_server(
     project_root = Path(__file__).resolve().parents[2]
     server = StdioServerParameters(
         command="uv",
-        args=["run", "--project", str(project_root), "ya-logseq-mcp"],
+        args=["run", "--project", str(project_root), "lsmcp"],
         env=_build_stdio_env(isolated_graph_env),
         cwd=project_root,
     )

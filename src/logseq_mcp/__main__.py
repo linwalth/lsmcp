@@ -6,7 +6,7 @@ import sys
 _TRANSPORTS = ("stdio", "sse", "streamable-http")
 
 
-def _build_parser(prog: str = "ya-logseq-mcp") -> argparse.ArgumentParser:
+def _build_parser(prog: str = "lsmcp") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=prog,
         description="Python MCP server for Logseq.",
@@ -35,7 +35,7 @@ def _build_parser(prog: str = "ya-logseq-mcp") -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    prog = os.path.basename(sys.argv[0]) if sys.argv and sys.argv[0] else "ya-logseq-mcp"
+    prog = os.path.basename(sys.argv[0]) if sys.argv and sys.argv[0] else "lsmcp"
     args = _build_parser(prog=prog).parse_args()
 
     logging.basicConfig(
