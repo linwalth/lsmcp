@@ -486,11 +486,16 @@ async def page_create(
 ) -> str:
     """Create a new Logseq page with optional properties and initial blocks.
 
-    Pass `name` with natural casing and orthography (for example "Meeting Notes
-    2026" or "Projekt Ideen"). Logseq resolves page names case-insensitively, so
-    casing only affects how the page is displayed; it preserves the supplied
-    casing as the page's display name. Do NOT lowercase or slugify `name` — that
-    would make the page show up in lowercase in Logseq.
+    BLUEPRINT WORKFLOW: before creating a page, call `list_blueprints` to see
+    which categories have a structure template, then `get_blueprint` to fetch the
+    headed-section layout. Pass that structure (minus placeholder brackets) as
+    `blocks` so the new page matches your graph's conventions instead of an
+    ad-hoc layout. For example, an item page should mirror `blaupausen/items`.
+
+    CASING: match the casing of EXISTING pages in the same namespace. Use
+    `search_pages` or `list_namespace` first to see how sibling pages are named.
+    Logseq file-graphs store names case-insensitively, but consistent casing
+    avoids confusion. Do NOT slugify or arbitrarily change casing.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     client = app_ctx.client

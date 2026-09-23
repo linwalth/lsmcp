@@ -29,6 +29,8 @@ Python MCP server for Logseq.
 | `cross_reference` | Pages that link to BOTH of two pages (intersection of their backlinks) |
 | `namespace_stats` | Granular stats for one namespace subtree: depth distribution, child namespaces |
 | `search_blocks` | Full-text search over BLOCK CONTENTS (find lore by substance, not just page names) |
+| `list_blueprints` | List page-structure templates under the `blaupausen/` namespace |
+| `get_blueprint` | Fetch the headed-block layout of a blueprint so new pages match graph conventions |
 | `query` | Run a Datalog query against Logseq's indexed DB; inline values via `%1`,`%2` placeholders |
 | `page_create` | Create a new page with optional properties and initial blocks |
 | `block_append` | Append blocks to a page; accepts flat strings or nested objects with content, properties, and children |

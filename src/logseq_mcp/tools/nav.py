@@ -581,3 +581,76 @@ async def cross_reference(
             "b_only_count": len(set_b - set_a),
         }
     )
+
+
+_BLUEPRINT_NAMESPACE = "blaupausen"
+
+
+@mcp.tool()
+async def list_blueprints(ctx: Context) -> str:
+    """List all page-blueprint templates in the graph.
+
+    Blueprints live under the 'blaupausen/' namespace and define the expected
+    block STRUCTURE for pages of each category (items, npc, spells, monsters,
+    quests, ...). Each blueprint contains headed sections with placeholder
+    prompts. CALL THIS before `page_create` to discover which categories have a
+    template, then use `get_blueprint` to fetch the structure to replicate.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    client = app_ctx.client
+
+    logger.info("list_blueprints")
+
+    raw = await client._call("logseq.Editor.getAllPages")
+    pages_raw = raw if isinstance(raw, list) else []
+
+    blueprints: list[dict] = []
+    for page_raw in pages_raw:
+        try:
+            page = PageEntity.model_validate(page_raw)
+        except Exception:
+            continue
+        if page.name and page.name.startswith(_BLUEPRINT_NAMESPACE + "/"):
+            category = page.name[len(_BLUEPRINT_NAMESPACE) + 1:]
+            blueprints.append({"category": category, "page": page.display_name or page.name})
+
+    blueprints.sort(key=lambda b: b["category"])
+    return json.dumps({"namespace": _BLUEPRINT_NAMESPACE, "blueprints": blueprints, "count": len(blueprints)})
+
+
+@mcp.tool()
+async def get_blueprint(
+    ctx: Context,
+    category: Annotated[str, Field(description="Blueprint category (e.g. 'items', 'npc', 'spells'). Matches a page under blaupausen/.")],
+) -> str:
+    """Fetch the full block structure of a page blueprint so it can be replicated.
+
+    Returns the headed sections and placeholder prompts from the blueprint page
+    `blaupausen/<category>`. Use this AFTER `list_blueprints` to see the exact
+    structure a new page of that category should follow, then pass that structure
+    to `page_create` as initial blocks (stripping placeholder brackets and filling
+    in real content). This ensures newly created pages match your graph's
+    conventions instead of ad-hoc layouts.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    client = app_ctx.client
+
+    cat = (category or "").strip().strip("/")
+    if not cat:
+        raise McpError(ErrorData(code=INTERNAL_ERROR, message="category must be a non-empty string"))
+
+    page_name = f"{_BLUEPRINT_NAMESPACE}/{cat}"
+    logger.info("get_blueprint: %s", page_name)
+
+    raw = await client._call("logseq.Editor.getPageBlocksTree", page_name)
+    blocks_raw = raw if isinstance(raw, list) else []
+
+    parsed: list[BlockEntity] = []
+    for b in blocks_raw:
+        try:
+            parsed.append(BlockEntity.model_validate(b))
+        except Exception:
+            continue
+
+    outline = _flatten_outline(parsed, max_chars=200)
+    return json.dumps({"blueprint": page_name, "category": cat, "block_count": len(outline), "outline": outline})

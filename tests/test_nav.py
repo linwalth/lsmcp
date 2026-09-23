@@ -400,3 +400,61 @@ async def test_query_bad_placeholder_raises_before_call(token_env):
     with pytest.raises(McpError):
         await query(ctx, "needs %1 and %2", ["only-one"])
     assert called == []  # must fail BEFORE hitting the API
+
+
+# ---------------------------------------------------------------------------
+# list_blueprints / get_blueprint
+# ---------------------------------------------------------------------------
+
+_BP_PAGES = [
+    {"id": 1, "uuid": "b1", "name": "blaupausen/items", "original-name": "Blaupausen/Items", "journal?": False},
+    {"id": 2, "uuid": "b2", "name": "blaupausen/npc", "original-name": "Blaupausen/NPC", "journal?": False},
+    {"id": 3, "uuid": "p1", "name": "items/sword", "original-name": "Items/Sword", "journal?": False},
+    {"id": 4, "uuid": "p2", "name": "kreaturen/drache", "original-name": "Kreaturen/Drache", "journal?": False},
+]
+
+
+async def test_list_blueprints_filters_namespace(token_env):
+    from logseq_mcp.tools.nav import list_blueprints
+
+    async def fake_call(method, *args):
+        assert method == "logseq.Editor.getAllPages"
+        return _BP_PAGES
+
+    ctx = _make_ctx(fake_call)
+    out = json.loads(await list_blueprints(ctx))
+    cats = [b["category"] for b in out["blueprints"]]
+    assert cats == ["items", "npc"]
+    assert out["count"] == 2
+    assert out["namespace"] == "blaupausen"
+
+
+async def test_get_blueprint_returns_outline(token_env):
+    from logseq_mcp.tools.nav import get_blueprint
+
+    blocks = [
+        {"id": 1, "uuid": "h1", "content": "### Beschreibung", "children": [
+            {"id": 2, "uuid": "h2", "content": "[PLACEHOLDER]", "children": []},
+        ]},
+    ]
+
+    async def fake_call(method, *args):
+        assert method == "logseq.Editor.getPageBlocksTree"
+        assert args[0] == "blaupausen/items"
+        return blocks
+
+    ctx = _make_ctx(fake_call)
+    out = json.loads(await get_blueprint(ctx, "items"))
+    assert out["blueprint"] == "blaupausen/items"
+    assert out["category"] == "items"
+    assert out["block_count"] == 2
+    assert out["outline"][0]["content"] == "### Beschreibung"
+
+
+async def test_get_blueprint_empty_category_rejected(token_env):
+    from logseq_mcp.tools.nav import get_blueprint
+    from mcp import McpError
+
+    ctx = _make_ctx(AsyncMock())
+    with pytest.raises(McpError):
+        await get_blueprint(ctx, "  ")
