@@ -132,7 +132,9 @@ def main() -> None:
     try:
         mcp.run(transport=transport)
     except KeyboardInterrupt:
-        pass
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
 
 
 if __name__ == "__main__":
