@@ -61,9 +61,9 @@ WriteBlockInput.model_rebuild()
 # Shared Annotated parameter descriptors for MCP tool signatures (descriptions
 # surface in the generated JSON schema so AI clients know how to call each tool).
 UuidArg = Annotated[str, Field(description="UUID of the target block (NOT a page name). Obtain it from get_page/get_block/page_outline.")]
-ContentArg = Annotated[str, Field(description="New markdown content for the block. Replaces the entire block body.")]
+ContentArg = Annotated[str, Field(description="New markdown content for the block. Replaces the entire block body. Do NOT prefix with bullet-point markers (- or *) — every Logseq block is inherently a bullet, so leading dashes render literally.")]
 PageNameArg = Annotated[str, Field(description="Target page name with natural casing (e.g. 'Meeting Notes'). Resolved case-insensitively; do NOT lowercase it.")]
-BlocksArg = Annotated[list | str | dict, Field(description="Block(s) to insert. Accepts a single string, a single object {content, properties?, children?}, or a list mixing both. Strings become plain blocks; objects allow nesting.")]
+BlocksArg = Annotated[list | str | dict, Field(description="Block(s) to insert. Accepts a single string, a single object {content, properties?, children?}, or a list mixing both. Strings become plain blocks; objects allow nesting. Do NOT prefix content with bullet-point markers (- or *) — every Logseq block is inherently a bullet, so leading dashes are redundant and render literally.")]
 MovePositionArg = Annotated[str, Field(description="Where to place the moved block relative to target: 'before' (preceding sibling), 'after' (following sibling), or 'child' (becomes a child of target).")]
 IsoDateArg = Annotated[str, Field(description="ISO calendar date as yyyy-MM-dd (e.g. '2026-09-22').")]
 
