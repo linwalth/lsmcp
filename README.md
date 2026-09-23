@@ -87,30 +87,29 @@ expected first-run result:
 
 ## Transports
 
-The default transport is **stdio** (what Claude Desktop and most local MCP clients expect). Streamable HTTP is available for remote/networked setups.
+The default transport is **streamable HTTP** (endpoint `/mcp` on `127.0.0.1:8765`). stdio is available for Claude Desktop and other stdio-only MCP clients.
 
 ```bash
-# stdio (default) — no flags needed
+# streamable HTTP (default) — no flags needed
 LOGSEQ_API_TOKEN=<token> uv run lsmcp
 
-# streamable HTTP on 127.0.0.1:8765 (endpoint /mcp)
-LOGSEQ_API_TOKEN=<token> uv run lsmcp --transport http
-# or equivalently: --transport streamable-http
+# stdio (for Claude Desktop and stdio-only clients)
+LOGSEQ_API_TOKEN=<token> uv run lsmcp --transport stdio
 ```
 
 Options (flags override env vars):
 
 | Flag | Env | Default | Notes |
 |------|-----|---------|-------|
-| `--transport` | `MCP_TRANSPORT` | `stdio` | `stdio` \| `sse` \| `streamable-http` (`http` aliases the last) |
-| `--host` | `MCP_HOST` | `127.0.0.1` | Bind host for non-stdio transports |
-| `--port` | `MCP_PORT` | `8765` | Bind port for non-stdio transports |
+| `--transport` | `MCP_TRANSPORT` | `http` | `http` \| `stdio` \| `sse` (`http` aliases `streamable-http`) |
+| `--host` | `MCP_HOST` | `127.0.0.1` | Bind host for http/sse transports |
+| `--port` | `MCP_PORT` | `8765` | Bind port for http/sse transports |
 
 `uv run lsmcp --help` prints usage. HTTP binds to loopback by default; if you expose it on `0.0.0.0`, put it behind an authenticated reverse proxy (the server does not enforce its own bearer token in this release).
 
 ## MCP Client Config
 
-Primary example for Claude Desktop (copy/paste-ready):
+Primary example for Claude Desktop (stdio transport, copy/paste-ready):
 
 ```json
 {
@@ -121,7 +120,9 @@ Primary example for Claude Desktop (copy/paste-ready):
         "run",
         "--project",
         "/path/to/lsmcp",
-        "lsmcp"
+        "lsmcp",
+        "--transport",
+        "stdio"
       ],
       "cwd": "/path/to/lsmcp",
       "env": {

@@ -5,13 +5,13 @@ import os
 import pytest
 
 
-def test_default_transport_is_stdio(monkeypatch):
+def test_default_transport_is_http(monkeypatch):
     monkeypatch.delenv("MCP_TRANSPORT", raising=False)
     monkeypatch.delenv("MCP_HOST", raising=False)
     monkeypatch.delenv("MCP_PORT", raising=False)
     from logseq_mcp.__main__ import _build_parser
     ns = _build_parser().parse_args([])
-    assert ns.transport == "stdio"
+    assert ns.transport == "http"
     assert ns.host == "127.0.0.1"
     assert ns.port == 8765
 
@@ -146,7 +146,7 @@ def test_auto_uses_cached_token_when_no_env(tmp_path, monkeypatch):
     monkeypatch.setattr(srv, "mcp", _Stub())
     main()
     assert os.environ.get("LOGSEQ_API_TOKEN") == "from-cache"
-    assert ran["transport"] == "stdio"
+    assert ran["transport"] == "streamable-http"
 
 
 def test_env_token_takes_precedence_over_cache(tmp_path, monkeypatch):

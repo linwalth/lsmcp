@@ -66,9 +66,9 @@ def _build_parser(prog: str = "lsmcp") -> argparse.ArgumentParser:
     parser.add_argument(
         "--transport",
         choices=_TRANSPORTS + ("http",),
-        default=os.environ.get("MCP_TRANSPORT", "stdio"),
+        default=os.environ.get("MCP_TRANSPORT", "http"),
         help=(
-            "MCP transport (default: stdio, or MCP_TRANSPORT env). "
+            "MCP transport (default: http/streamable-http, or MCP_TRANSPORT env). "
             "'http' is an alias for 'streamable-http'."
         ),
     )
