@@ -654,3 +654,99 @@ async def get_blueprint(
 
     outline = _flatten_outline(parsed, max_chars=200)
     return json.dumps({"blueprint": page_name, "category": cat, "block_count": len(outline), "outline": outline})
+
+
+_CONVENTIONS = {
+    "typography": {
+        "em_en_dashes": "Forbidden in prose. Replace by context: sentence boundary '. ', apposition ', ', stats whitespace only, number ranges '-'. Dashes inside [[...]] links, asset paths, and properties are exempt.",
+        "quotes": "ASCII quotes only: \" and '. No smart/curly quotes.",
+        "umlauts": "Write ä ö ü ß as real umlauts, never ae oe ue ss. Exception: proper nouns consistently spelled without umlauts.",
+        "no_cjk": "No CJK unified ideographs in wiki content. Transliterate or translate Asian-origin terms.",
+        "sentences_end_with_period": "Narrative/prose bullets always end with a period. Fragments (HP, AC, labels, stats) do not. Does not apply to statblocks and technical lists.",
+    },
+    "structure": {
+        "bullet_style": "Bullets, not flowing prose. Related facts in one bullet, sub-bullets for details, max depth 3. No doubled '- -' (Logseq already makes a bullet from '-'). Detailed descriptions nonetheless. Links to everything relevant.",
+        "no_bullet_prefix": "Do not prefix block content with '- ' or '*' — every Logseq block is inherently a bullet, so leading dashes render literally.",
+        "headings_root_level": "All headings on root level, never indented. '### Heading', not '- ### Heading' or '\\t### Heading'. Heading depth (# to ######) is preserved. No exceptions.",
+        "section_labels": "Section labels as '### Label' headings (without '**', Logseq renders bold). Statblock headings all '### '.",
+        "no_title_heading": "First line of a page must not repeat the file name. Logseq displays the file name as the title.",
+        "no_block_ids": "No block IDs (^BLOCKNAME).",
+    },
+    "links": {
+        "notation": "Slash notation: [[Namespace/Page]]. Physical files use ___ separator internally (invisible to writer).",
+        "existing_only": "Links may only point to EXISTING pages. Verify the target exists before linking. Dead-links create empty pages on click and must be cleaned up manually. If a target does not exist, write as plain text (without [[]]) or create the page first. Exception: deliberate forward-references filled promptly (e.g. quest links on new dungeons).",
+        "no_pipe_aliases": "[[Namespace/Name|Name]] is forbidden when the alias equals the last path segment — Logseq creates an empty page on click. Use [[Namespace/Name]] instead.",
+        "alias_syntax": "Pipe-syntax [[Namespace/Name|Alias]] does NOT work in Logseq (that is Obsidian syntax). Correct Logseq syntax: [Display Text]([[Namespace/Page]]). Example: [die lachende Katze]([[Organisationen/Gilden und Verbünde/Die lachende Katze - Händlergilde]]).",
+        "no_inline_chains": "No comma-separated inline link chains. Expand to nested bullets instead.",
+        "child_locations": "Child locations link to parent splitter: '- Liegt auf [[...]]'.",
+    },
+    "game_design": {
+        "no_quest_tags": "No tags for plothooks/quests. Plothooks under '### Plothooks' on location pages. Quests in the Quests/ namespace.",
+        "ley_not_resource": "Ley is cosmic energy, omnipresent, connected to water. Not mineable, not controllable like a mine.",
+        "fantastic_realism": "Adapt real-world processes and principles for the fantasy world. The user has the final word.",
+        "metropolregionen": "Cities under a same-named region are named 'Metropolregion X/X'. Region: 'Metropolregion Baroly', city below: 'Baroly'. Exception: hub/dungeon pairs (e.g. Ana-Noxys/Ana-Noxys) are not metropolregionen and stay untouched.",
+    },
+    "statblock_schema": {
+        "mandatory_fields": "Description (short prose, max 5-8 lines), CR / difficulty, HP, AC, movement, STR/DEX/CON/INT/WIS/CHA (with modifier in parentheses), type, alignment, actions.",
+        "optional_fields": "Bonus actions, reactions, free actions (bosses only).",
+        "no_basismod": "Basismod is deprecated. Use six attribute scores (STR/DEX/CON/INT/WIS/CHA) with modifiers. Proficiency bonus (Ubungsbonus) is player-characters only, never in NPC/creature statblocks.",
+        "art_label": "**Art:** not **Rasse:** or **Volk:** (universal for humanoid, monstrosity, undead, etc.).",
+        "free_actions": "'Freie Aktionen' replaces 'Villain-Aktionen'/' Bosewichtaktionen'.",
+        "dungeon_indent": "Dungeon statblocks retain double indentation (\\t\\t-) under '#### [Name]' within '### Encounters'.",
+    },
+    "images": "Image and cover-image embeds (![bild](../assets/...)) are tolerated on ALL pages of ALL schemas. Neither blueprints nor audits object to image embeds. Images do not disturb any schema.",
+}
+
+
+_NAMESPACE_MAP = {
+    "schauplätze": {
+        "splitter": "World shards and locations (Schauplätze/Splitter/)",
+    },
+    "kreaturen": {
+        "npcs_recurring": "Recurring NPCs and humanoid encounter groups (Kreaturen/NPCs (Recurring)/)",
+        "npcs_regular": "One-shot NPCs (Kreaturen/NPCs (Regular)/)",
+        "npcs_retired": "Dead/retired NPCs (Kreaturen/NPCs (Retired)/)",
+        "tiere": "Animal creatures (Kreaturen/Tiere/)",
+        "fahrzeuge": "Airships, planes, ships (Kreaturen/Fahrzeuge/)",
+        "monster": "Non-humanoid monsters, constructs, ghosts (Kreaturen/Monster/)",
+    },
+    "organisationen": "Religions and cults, guilds and unions, military and factions, groups, syndicates, gangs, families and clans",
+    "götter und höhere wesen": "Gods, saints, higher principles",
+    "items": {
+        "_root": "Items, curses, relics",
+        "drogen": "Drug sub-category (Items/Drogen/)",
+    },
+    "spells": "Homebrew spells",
+    "quests": "Quests with '### Prämisse' minimum",
+    "blaupausen": "19 page-structure templates (categories: Splitter, Städte, Dörfer, Gegenden, Dungeons, Natur, Magisch, Zivilisation, Quest, NPC, Encounter, Monster, Organisation, Kompendium, Götter, Items, Spells, Tiere, Fahrzeuge)",
+}
+
+
+@mcp.tool()
+async def get_conventions(ctx: Context) -> str:
+    """Return the graph's WRITING CONVENTIONS as structured JSON.
+
+    Covers typography (no em-dashes, ASCII quotes, real umlauts, no CJK), structure
+    (bullet style, heading rules, no title-heading, no block-IDs), link syntax
+    ([[Namespace/Page]], existing-only, no pipe-aliases, correct alias syntax),
+    game-design rules (no quest tags, ley-is-not-a-resource, fantastic realism,
+    metropolregion naming), and the statblock schema (mandatory/optional fields,
+    no basismod, art label, dungeon indentation). Call this BEFORE writing any
+    narrative content via block_append, block_prepend, block_update,
+    journal_append, or page_create.
+    """
+    logger.info("get_conventions")
+    return json.dumps(_CONVENTIONS, ensure_ascii=False)
+
+
+@mcp.tool()
+async def get_namespace_map(ctx: Context) -> str:
+    """Return the graph's NAMESPACE ARCHITECTURE as structured JSON.
+
+    Maps each top-level namespace to its purpose and sub-namespaces, so the agent
+    knows WHERE to place new pages (e.g. recurring NPCs under
+    Kreaturen/NPCs (Recurring)/, items under Items/, quests under Quests/). Call
+    this before page_create or rename_page to ensure correct placement.
+    """
+    logger.info("get_namespace_map")
+    return json.dumps(_NAMESPACE_MAP, ensure_ascii=False)

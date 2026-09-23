@@ -458,3 +458,51 @@ async def test_get_blueprint_empty_category_rejected(token_env):
     ctx = _make_ctx(AsyncMock())
     with pytest.raises(McpError):
         await get_blueprint(ctx, "  ")
+
+
+# ---------------------------------------------------------------------------
+# get_conventions / get_namespace_map (static tools)
+# ---------------------------------------------------------------------------
+
+async def test_get_conventions_returns_structured_json(token_env):
+    from logseq_mcp.tools.nav import get_conventions
+    ctx = _make_ctx(AsyncMock())
+    out = json.loads(await get_conventions(ctx))
+    assert "typography" in out
+    assert "structure" in out
+    assert "links" in out
+    assert "statblock_schema" in out
+    assert "no_em_dash_rule" not in out  # key is em_en_dashes
+    assert "em_en_dashes" in out["typography"]
+    assert "ascii" in out["typography"]["quotes"].lower()
+    assert "bullet" in out["structure"]["no_bullet_prefix"].lower()
+
+
+async def test_get_conventions_has_no_encoding_section(token_env):
+    from logseq_mcp.tools.nav import get_conventions
+    ctx = _make_ctx(AsyncMock())
+    out = json.loads(await get_conventions(ctx))
+    assert "encoding" not in out
+    assert "filename" not in out
+
+
+async def test_get_namespace_map_returns_structure(token_env):
+    from logseq_mcp.tools.nav import get_namespace_map
+    ctx = _make_ctx(AsyncMock())
+    out = json.loads(await get_namespace_map(ctx))
+    assert "schauplätze" in out
+    assert "kreaturen" in out
+    assert "items" in out
+    assert "quests" in out
+    assert "blaupausen" in out
+    kr = out["kreaturen"]
+    assert "npcs_recurring" in kr
+    assert "npcs_regular" in kr
+    assert "npcs_retired" in kr
+
+
+async def test_get_namespace_map_preserves_umlaute(token_env):
+    from logseq_mcp.tools.nav import get_namespace_map
+    ctx = _make_ctx(AsyncMock())
+    raw = await get_namespace_map(ctx)
+    assert "ä" in raw or "\\u00e4" in raw  # umlaut survives JSON serialization

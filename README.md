@@ -31,6 +31,8 @@ Python MCP server for Logseq.
 | `search_blocks` | Full-text search over BLOCK CONTENTS (find lore by substance, not just page names) |
 | `list_blueprints` | List page-structure templates under the `blaupausen/` namespace |
 | `get_blueprint` | Fetch the headed-block layout of a blueprint so new pages match graph conventions |
+| `get_conventions` | Structured JSON of all writing conventions (typography, structure, links, statblock schema) |
+| `get_namespace_map` | Namespace architecture map showing where each page type belongs |
 | `query` | Run a Datalog query against Logseq's indexed DB; inline values via `%1`,`%2` placeholders |
 | `page_create` | Create a new page with optional properties and initial blocks |
 | `block_append` | Append blocks to a page; accepts flat strings or nested objects with content, properties, and children |
