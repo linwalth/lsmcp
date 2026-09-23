@@ -30,6 +30,9 @@ logseq_docs/
 # Claude
 .claude/
 
+# Kilo
+.kilo/
+
 # Workspace scaffolding
 .planning/
 logseq-test-graph/
