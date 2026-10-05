@@ -27,7 +27,7 @@ from mcp.server.fastmcp import Context
 from mcp.types import ErrorData, INTERNAL_ERROR
 from pydantic import Field
 
-from logseq_mcp.server import AppContext, mcp
+from logseq_mcp.server import AppContext, mcp, ANNOT_READ_ONLY
 from logseq_mcp.types import BlockEntity, PageEntity
 
 logger = logging.getLogger(__name__)
@@ -86,7 +86,7 @@ def _interpolate(datalog: str, inputs: list) -> str:
     return interpolated
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_READ_ONLY)
 async def query(
     ctx: Context,
     datalog: Annotated[str, Field(description="Datalog query string (Logseq advanced-query edn syntax). Inline caller values via %1,%2,... placeholders (do NOT use :in $ — HTTP API won't bind it).")],
@@ -160,7 +160,7 @@ async def _id_to_name_map(client) -> dict[int, str]:
     return mapping
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_READ_ONLY)
 async def graph_stats(ctx: Context) -> str:
     """Cheap orientation snapshot of the whole graph.
 
@@ -234,7 +234,7 @@ def _flatten_outline(blocks: list[BlockEntity], depth: int = 0, max_chars: int =
     return out
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_READ_ONLY)
 async def page_outline(
     ctx: Context,
     name: Annotated[str, Field(description="Page name (natural casing).")],
@@ -272,7 +272,7 @@ async def page_outline(
     return json.dumps({"page": name, "block_count": len(outline), "outline": outline})
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_READ_ONLY)
 async def expand_references(
     ctx: Context,
     name: Annotated[str, Field(description="Starting page name (natural casing). Expansion begins here at distance 0.")],
@@ -363,7 +363,7 @@ def _collect_ref_ids(blocks: list[BlockEntity], acc: set[int]) -> None:
             _collect_ref_ids(block.children, acc)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_READ_ONLY)
 async def forward_links(
     ctx: Context,
     name: Annotated[str, Field(description="Page name whose outbound wikilinks to list (natural casing).")],
@@ -407,7 +407,7 @@ async def forward_links(
     return json.dumps({"page": name, "links": links, "count": len(links)})
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_READ_ONLY)
 async def search_blocks(
     ctx: Context,
     query_text: Annotated[str, Field(description="Full-text search term matched against block CONTENTS (not page names). e.g. 'drache', 'AC 16'.")],
@@ -461,7 +461,7 @@ async def search_blocks(
     return json.dumps({"query": stripped, "blocks": out, "count": len(out)})
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_READ_ONLY)
 async def namespace_stats(
     ctx: Context,
     namespace: Annotated[str, Field(description="Namespace to analyse (e.g. 'schauplätze' or 'kreaturen'). Case-insensitive.")],
@@ -529,7 +529,7 @@ async def namespace_stats(
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_READ_ONLY)
 async def cross_reference(
     ctx: Context,
     a: Annotated[str, Field(description="First page name (natural casing).")],
@@ -587,7 +587,7 @@ async def cross_reference(
 _BLUEPRINT_NAMESPACE = "blaupausen"
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_READ_ONLY)
 async def list_blueprints(ctx: Context) -> str:
     """List all page-blueprint templates in the graph.
 
@@ -619,7 +619,7 @@ async def list_blueprints(ctx: Context) -> str:
     return json.dumps({"namespace": _BLUEPRINT_NAMESPACE, "blueprints": blueprints, "count": len(blueprints)})
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_READ_ONLY)
 async def get_blueprint(
     ctx: Context,
     category: Annotated[str, Field(description="Blueprint category (e.g. 'items', 'npc', 'spells'). Matches a page under blaupausen/.")],
@@ -723,7 +723,7 @@ _NAMESPACE_MAP = {
 }
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_READ_ONLY)
 async def get_conventions(ctx: Context) -> str:
     """Return the graph's WRITING CONVENTIONS as structured JSON.
 
@@ -740,7 +740,7 @@ async def get_conventions(ctx: Context) -> str:
     return json.dumps(_CONVENTIONS, ensure_ascii=False)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_READ_ONLY)
 async def get_namespace_map(ctx: Context) -> str:
     """Return the graph's NAMESPACE ARCHITECTURE, merging static conventions
     with LIVE page counts from the graph.
@@ -866,7 +866,7 @@ def _extract_outgoing_links(blocks: list[BlockEntity]) -> list[str]:
     return links
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_READ_ONLY)
 async def validate_page(
     ctx: Context,
     name: Annotated[str, Field(description="Page name to validate (natural casing).")],
@@ -997,7 +997,7 @@ async def validate_page(
     }, ensure_ascii=False)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_READ_ONLY)
 async def orphan_report(
     ctx: Context,
     limit: Annotated[int, Field(description="Max orphan pages to return (0=all). Default 100.")] = 100,
@@ -1060,7 +1060,7 @@ async def orphan_report(
     }, ensure_ascii=False)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_READ_ONLY)
 async def similar_pages(
     ctx: Context,
     threshold: Annotated[float, Field(description="Similarity ratio threshold 0-1 (default 0.85). Higher = stricter match.")] = 0.85,

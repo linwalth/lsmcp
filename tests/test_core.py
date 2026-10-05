@@ -234,7 +234,7 @@ async def test_list_pages_namespace_filter(token_env):
 
     mock_ctx = _make_ctx(fake_call)
     result = await list_pages(mock_ctx, namespace="projects")
-    data = json.loads(result)
+    data = json.loads(result)["pages"]
 
     assert len(data) == 2, f"Expected 2 pages, got {len(data)}: {[p['name'] for p in data]}"
     names = [p["name"] for p in data]
@@ -264,7 +264,7 @@ async def test_list_pages_tolerates_namespace_page_refs(token_env):
 
     mock_ctx = _make_ctx(fake_call)
     result = await list_pages(mock_ctx, include_journals=True, limit=10)
-    data = json.loads(result)
+    data = json.loads(result)["pages"]
 
     assert [page["name"] for page in data] == [
         "daily",
@@ -328,7 +328,7 @@ async def test_search_pages_finds_fragment_case_insensitively(token_env):
         return None
 
     mock_ctx = _make_ctx(fake_call)
-    data = json.loads(await search_pages(mock_ctx, "eastern"))
+    data = json.loads(await search_pages(mock_ctx, "eastern"))["pages"]
 
     names = [p["name"] for p in data]
     assert names == ["Worldbuilding/Regions/Eastern Sea"], names
@@ -350,7 +350,7 @@ async def test_search_pages_ranks_exact_leaf_match_first(token_env):
         return None
 
     mock_ctx = _make_ctx(fake_call)
-    data = json.loads(await search_pages(mock_ctx, "coastal region"))
+    data = json.loads(await search_pages(mock_ctx, "coastal region"))["pages"]
 
     assert [p["name"] for p in data] == ["Places/Coastal Region", "Projects/Notes/Coastal Region"]
 
@@ -370,11 +370,11 @@ async def test_search_pages_excludes_journals_by_default(token_env):
         return None
 
     mock_ctx = _make_ctx(fake_call)
-    data = json.loads(await search_pages(mock_ctx, "alpha"))
+    data = json.loads(await search_pages(mock_ctx, "alpha"))["pages"]
 
     assert [p["name"] for p in data] == ["Notes/Alpha Report"]
 
-    data_all = json.loads(await search_pages(mock_ctx, "alpha", include_journals=True))
+    data_all = json.loads(await search_pages(mock_ctx, "alpha", include_journals=True))["pages"]
     assert {p["name"] for p in data_all} == {"Notes/Alpha Report", "2026-09-10-Alpha"}
 
 
@@ -393,7 +393,7 @@ async def test_search_pages_respects_limit(token_env):
         return None
 
     mock_ctx = _make_ctx(fake_call)
-    data = json.loads(await search_pages(mock_ctx, "alpha", limit=2))
+    data = json.loads(await search_pages(mock_ctx, "alpha", limit=2))["pages"]
     assert len(data) == 2
 
 
@@ -426,7 +426,7 @@ async def test_list_namespace_lists_pages_under_namespace(token_env):
         return None
 
     mock_ctx = _make_ctx(fake_call)
-    data = json.loads(await list_namespace(mock_ctx, "Worldbuilding/Regions"))
+    data = json.loads(await list_namespace(mock_ctx, "Worldbuilding/Regions"))["pages"]
 
     assert [p["name"] for p in data] == ["Worldbuilding/Regions/Alpha", "Worldbuilding/Regions/Beta"]
     assert calls[0][0] == "logseq.Editor.getPagesFromNamespace"
@@ -464,10 +464,10 @@ async def test_list_namespace_excludes_journals_by_default(token_env):
         return None
 
     mock_ctx = _make_ctx(fake_call)
-    data = json.loads(await list_namespace(mock_ctx, "Bereich"))
+    data = json.loads(await list_namespace(mock_ctx, "Bereich"))["pages"]
     assert [p["name"] for p in data] == ["Bereich/Seite"]
 
-    data_all = json.loads(await list_namespace(mock_ctx, "Bereich", include_journals=True))
+    data_all = json.loads(await list_namespace(mock_ctx, "Bereich", include_journals=True))["pages"]
     assert {p["name"] for p in data_all} == {"Bereich/Seite", "Bereich/2026-09-10"}
 
 
@@ -492,7 +492,8 @@ async def test_list_namespace_handles_non_list_response(token_env):
 
     mock_ctx = _make_ctx(fake_call)
     data = json.loads(await list_namespace(mock_ctx, "Projekte"))
-    assert data == []
+    assert data["pages"] == []
+    assert data["count"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -617,8 +618,8 @@ async def test_list_pages_slim_drops_properties(token_env):
         return None
 
     mock_ctx = _make_ctx(fake_call)
-    full = json.loads(await list_pages(mock_ctx))
-    slim = json.loads(await list_pages(mock_ctx, slim=True))
+    full = json.loads(await list_pages(mock_ctx))["pages"]
+    slim = json.loads(await list_pages(mock_ctx, slim=True))["pages"]
 
     assert "properties" in full[0]
     assert "properties" not in slim[0]
@@ -640,7 +641,7 @@ async def test_search_pages_slim_drops_properties(token_env):
         return None
 
     mock_ctx = _make_ctx(fake_call)
-    slim = json.loads(await search_pages(mock_ctx, "alph", slim=True))
+    slim = json.loads(await search_pages(mock_ctx, "alph", slim=True))["pages"]
     assert slim and "properties" not in slim[0]
 
 
@@ -659,7 +660,7 @@ async def test_search_pages_within_namespace_filters(token_env):
         return None
 
     mock_ctx = _make_ctx(fake_call)
-    res = json.loads(await search_pages(mock_ctx, "dorf", within_namespace="schauplätze"))
+    res = json.loads(await search_pages(mock_ctx, "dorf", within_namespace="schauplätze"))["pages"]
     names = [p["name"] for p in res]
     assert names == ["Schauplätze/Dorf"]
     assert "Kreaturen/Dorf" not in names

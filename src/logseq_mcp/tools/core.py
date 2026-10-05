@@ -8,13 +8,13 @@ from mcp.types import ErrorData, INTERNAL_ERROR
 from mcp.server.fastmcp import Context
 from pydantic import Field
 
-from logseq_mcp.server import mcp, AppContext
+from logseq_mcp.server import mcp, AppContext, ANNOT_READ_ONLY
 from logseq_mcp.types import BlockEntity, PageEntity
 
 logger = logging.getLogger(__name__)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_READ_ONLY)
 async def health(ctx: Context) -> str:
     """Ping Logseq and return graph name and page count."""
     app_ctx: AppContext = ctx.request_context.lifespan_context
@@ -64,7 +64,7 @@ def _parse_block_tree(raw_blocks: list) -> list[BlockEntity]:
     return parsed
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_READ_ONLY)
 async def get_page(
     ctx: Context,
     name: Annotated[str, Field(description="Page name with natural casing (e.g. 'Meeting Notes 2026'). Resolved case-insensitively.")],
@@ -106,7 +106,7 @@ async def get_page(
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_READ_ONLY)
 async def get_block(
     ctx: Context,
     uuid: Annotated[str, Field(description="Block UUID (not a page name). From get_page/page_outline/etc.")],
@@ -133,7 +133,7 @@ async def get_block(
     return json.dumps(block.model_dump(by_alias=False))
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_READ_ONLY)
 async def list_pages(
     ctx: Context,
     namespace: Annotated[str, Field(description="Optional namespace PREFIX to filter by (e.g. 'projects' matches 'projects/alpha'). Case-insensitive. Empty = all pages.")] = "",
@@ -176,11 +176,18 @@ async def list_pages(
         pages.append(page)
 
     pages.sort(key=lambda page: page.name.lower())
+    total_matching = len(pages)
     if limit > 0:
         pages = pages[:limit]
+    has_more = limit > 0 and total_matching > len(pages)
 
     result = [_page_summary(page, slim=slim) for page in pages]
-    return json.dumps(result)
+    return json.dumps({
+        "pages": result,
+        "count": len(result),
+        "total_matching": total_matching,
+        "has_more": has_more,
+    })
 
 
 def _page_summary(page: PageEntity, slim: bool = False) -> dict:
@@ -216,7 +223,7 @@ def _search_rank(page: PageEntity, query_cf: str) -> tuple[int, int, int, str]:
     return (bucket, depth, len(page.name), name_cf)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_READ_ONLY)
 async def search_pages(
     ctx: Context,
     query: Annotated[str, Field(description="Fragment of a page name to search for (case-insensitive). Matches both display name and storage slug.")],
@@ -268,13 +275,21 @@ async def search_pages(
         matches.append(page)
 
     matches.sort(key=lambda page: _search_rank(page, query_cf))
+    total_matching = len(matches)
     if limit > 0:
         matches = matches[:limit]
+    has_more = limit > 0 and total_matching > len(matches)
 
-    return json.dumps([_page_summary(page, slim=slim) for page in matches])
+    result = [_page_summary(page, slim=slim) for page in matches]
+    return json.dumps({
+        "pages": result,
+        "count": len(result),
+        "total_matching": total_matching,
+        "has_more": has_more,
+    })
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_READ_ONLY)
 async def list_namespace(
     ctx: Context,
     namespace: Annotated[str, Field(description="Namespace path without slashes (e.g. 'projects' or 'worldbuilding/regions'). Case-insensitive.")],
@@ -317,10 +332,18 @@ async def list_namespace(
         pages.append(page)
 
     pages.sort(key=lambda page: page.name.lower())
+    total_matching = len(pages)
     if limit > 0:
         pages = pages[:limit]
+    has_more = limit > 0 and total_matching > len(pages)
 
-    return json.dumps([_page_summary(page) for page in pages])
+    result = [_page_summary(page) for page in pages]
+    return json.dumps({
+        "pages": result,
+        "count": len(result),
+        "total_matching": total_matching,
+        "has_more": has_more,
+    })
 
 
 def _namespace_tree_node(raw: dict, include_journals: bool) -> dict | None:
@@ -345,7 +368,7 @@ def _namespace_tree_node(raw: dict, include_journals: bool) -> dict | None:
     return node
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_READ_ONLY)
 async def list_namespace_tree(
     ctx: Context,
     namespace: Annotated[str, Field(description="Top-level or nested namespace path without slashes (e.g. 'worldbuilding'). Case-insensitive.")],
@@ -388,7 +411,7 @@ async def list_namespace_tree(
     return json.dumps(tree)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_READ_ONLY)
 async def get_references(
     ctx: Context,
     name: Annotated[str, Field(description="Page name whose backlinks to retrieve (natural casing).")],

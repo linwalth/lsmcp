@@ -10,7 +10,15 @@ from mcp.types import ErrorData, INTERNAL_ERROR
 from pydantic import BaseModel, Field, ValidationError, model_validator
 from typing import Annotated
 
-from logseq_mcp.server import AppContext, mcp
+from logseq_mcp.server import (
+    AppContext,
+    mcp,
+    ANNOT_READ_ONLY,
+    ANNOT_APPEND,
+    ANNOT_UPDATE_IDEMPOTENT,
+    ANNOT_DELETE,
+    ANNOT_RENAME,
+)
 from logseq_mcp.types import BlockEntity, PageEntity
 
 logger = logging.getLogger(__name__)
@@ -477,7 +485,7 @@ def _normalize_error(exc: Exception) -> McpError:
     raise exc
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_APPEND)
 async def page_create(
     ctx: Context,
     name: Annotated[str, Field(description="New page name with natural casing (e.g. 'Meeting Notes 2026'). Do NOT lowercase — casing becomes the display name.")],
@@ -565,7 +573,7 @@ async def page_create(
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_APPEND)
 async def block_append(ctx: Context, page: Annotated[str, Field(description="Existing target page name with natural casing (e.g. 'Meeting Notes'). NOT a journal date — use journal_append for that.")], blocks: BlocksArg) -> str:
     """Append blocks to an existing page. REQUIRES `page` — it has NO default and
     is never inferred from context (there is no notion of a "current page").
@@ -607,7 +615,7 @@ async def block_append(ctx: Context, page: Annotated[str, Field(description="Exi
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_APPEND)
 async def block_prepend(ctx: Context, page: Annotated[str, Field(description="Existing target page name with natural casing. NOT a journal date — use journal_append for that.")], blocks: BlocksArg) -> str:
     """Prepend blocks to the TOP of an existing page (above all existing content).
 
@@ -647,7 +655,7 @@ async def block_prepend(ctx: Context, page: Annotated[str, Field(description="Ex
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_UPDATE_IDEMPOTENT)
 async def block_update(ctx: Context, uuid: UuidArg, content: ContentArg) -> str:
     """Overwrite the content of an existing block identified by UUID.
 
@@ -680,7 +688,7 @@ async def block_update(ctx: Context, uuid: UuidArg, content: ContentArg) -> str:
         return json.dumps({"uuid": uuid, "content": content})
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_DELETE)
 async def block_delete(ctx: Context, uuid: UuidArg) -> str:
     """Delete a block and its entire subtree by UUID.
 
@@ -699,7 +707,7 @@ async def block_delete(ctx: Context, uuid: UuidArg) -> str:
     return json.dumps({"ok": True, "uuid": uuid})
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_DELETE)
 async def delete_page(ctx: Context, name: PageNameArg) -> str:
     """Delete a page by name. PERMANENT and irreversible.
 
@@ -719,7 +727,7 @@ async def delete_page(ctx: Context, name: PageNameArg) -> str:
     return json.dumps({"ok": True, "name": name})
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_RENAME)
 async def rename_page(
     ctx: Context,
     old_name: Annotated[str, Field(description="Current page name (natural casing). Must already exist.")],
@@ -757,7 +765,7 @@ async def rename_page(
     return json.dumps({"ok": True, "old_name": old_name, "new_name": new_name})
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_UPDATE_IDEMPOTENT)
 async def move_block(ctx: Context, uuid: UuidArg, target_uuid: UuidArg, position: MovePositionArg) -> str:
     """Move a block (with its subtree) to a new position relative to a target block.
 
@@ -812,7 +820,7 @@ async def move_block(ctx: Context, uuid: UuidArg, target_uuid: UuidArg, position
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_UPDATE_IDEMPOTENT)
 async def journal_today(ctx: Context) -> str:
     """Get-or-create TODAY'S journal page and return its block tree.
 
@@ -862,7 +870,7 @@ def _iter_inclusive_dates(start: date, end: date, *, max_days: int = _JOURNAL_RA
     return [start + timedelta(days=i) for i in range(day_count)]
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_APPEND)
 async def journal_append(ctx: Context, date: IsoDateArg, blocks: BlocksArg) -> str:
     """Append blocks to a journal page for a given DATE, creating it if needed.
 
@@ -900,7 +908,7 @@ async def journal_append(ctx: Context, date: IsoDateArg, blocks: BlocksArg) -> s
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=ANNOT_READ_ONLY)
 async def journal_range(
     ctx: Context,
     start_date: Annotated[str, Field(description="Start date inclusive, ISO yyyy-MM-dd (e.g. '2026-09-01').")],
