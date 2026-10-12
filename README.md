@@ -1,6 +1,11 @@
 # lsmcp
 
+<p align="center"><img src="icon.svg" width="64" alt="lsmcp logo"></p>
+
 Python MCP server for Logseq.
+
+<p align="center"><img src="./demo.svg" width="720" alt="lsmcp architecture"></p>
+
 
 ## What This Is
 
